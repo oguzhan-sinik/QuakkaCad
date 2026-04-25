@@ -25,6 +25,8 @@ export default function ConferencePage() {
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [planBlocks, setPlanBlocks] = useState<PlanBlock[]>([]);
   const [plannerLoading, setPlannerLoading] = useState(false);
+  const [targetedBlockIds, setTargetedBlockIds] = useState<Set<string>>(new Set());
+  const [processingUpToEntry, setProcessingUpToEntry] = useState<number | null>(null);
   const [transcriptUpdated, setTranscriptUpdated] = useState(false);
   const [cadCode, setCadCode] = useState<string | null>(null);
   const [cadLoading, setCadLoading] = useState(false);
@@ -40,6 +42,8 @@ export default function ConferencePage() {
   const plannerLoadingRef = useRef(false);
   plannerLoadingRef.current = plannerLoading;
   const lastPlannerLinesRef = useRef(0);
+  // Records the frontend line index (= postedCountRef before posting) at planner run start
+  const plannerBatchStartRef = useRef(0);
 
   const conference = useConference({
     conferenceId,
@@ -48,12 +52,8 @@ export default function ConferencePage() {
     onPlanUpdate: (blocks) => setPlanBlocks(blocks as PlanBlock[]),
   });
 
-  // When Scribe produces a transcript:
-  // 1. Update local UI directly (so we see our own transcript immediately)
-  // 2. Send through signaling server (so other participants see it)
   const onScribeTranscript = useCallback(
     (text: string, isPartial: boolean) => {
-      // Direct local update
       handleTranscript({
         speakerName: displayNameRef.current,
         text,
@@ -61,7 +61,6 @@ export default function ConferencePage() {
         timestamp: Date.now(),
         peerId: "__self__",
       });
-      // Broadcast to others
       conference.sendTranscript(text, isPartial);
     },
     [conference.sendTranscript, handleTranscript]
@@ -98,9 +97,15 @@ export default function ConferencePage() {
   const handleRunPlanner = useCallback(async () => {
     const mid = meetingIdRef.current;
     if (!mid || plannerLoadingRef.current) return;
+
+    // Record where this batch starts (before we reset lastPlannerLinesRef)
+    plannerBatchStartRef.current = postedCountRef.current;
     lastPlannerLinesRef.current = linesRef.current.length;
     setTranscriptUpdated(false);
     setPlannerLoading(true);
+    setTargetedBlockIds(new Set());
+    setProcessingUpToEntry(null);
+
     try {
       // Sync any unposted committed lines to the backend transcript
       const currentLines = linesRef.current;
@@ -120,27 +125,78 @@ export default function ConferencePage() {
       }
       postedCountRef.current = currentLines.length;
 
-      // Run the planner agent
+      // Open the SSE stream
       const res = await fetch(`/api/meetings/${mid}/agent/plan`, { method: "POST" });
-      if (!res.ok) throw new Error(await res.text());
-      const result = await res.json();
+      if (!res.ok || !res.body) throw new Error(`Planner HTTP error: ${res.status}`);
 
-      setPlanBlocks((prev) => {
-        const updatedIds = new Set<string>(result.updated.map((b: PlanBlock) => b.id));
-        return [...prev.filter((b) => !updatedIds.has(b.id)), ...result.updated, ...result.created];
-      });
-      conference.sendPlanUpdate([...result.updated, ...result.created]);
-      setPlanUpdatedForCad(true);
-      if (!hasRunCadOnce.current) {
-        hasRunCadOnce.current = true;
-        handleRunOpenSCAD();
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Split on SSE double-newline delimiter; keep incomplete trailing event in buffer
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
+          if (!dataLine) continue;
+
+          let event: Record<string, unknown>;
+          try {
+            event = JSON.parse(dataLine.slice("data: ".length));
+          } catch {
+            continue;
+          }
+
+          const type = event.type as string;
+
+          if (type === "chunk_start") {
+            // New chunk: clear previous block highlights, advance scan cursor
+            setTargetedBlockIds(new Set());
+            const batchOffsetEnd = event.batch_offset_end as number;
+            setProcessingUpToEntry(plannerBatchStartRef.current + batchOffsetEnd);
+
+          } else if (type === "block_created") {
+            const block = event.block as PlanBlock;
+            setPlanBlocks((prev) => [...prev, block]);
+            setTargetedBlockIds((prev) => new Set([...prev, block.id]));
+
+          } else if (type === "block_updated") {
+            const block = event.block as PlanBlock;
+            setPlanBlocks((prev) => prev.map((b) => (b.id === block.id ? block : b)));
+            setTargetedBlockIds((prev) => new Set([...prev, block.id]));
+
+          } else if (type === "done") {
+            // Broadcast final plan state to WebSocket peers
+            setPlanBlocks((prev) => {
+              conference.sendPlanUpdate(prev);
+              return prev;
+            });
+            setPlanUpdatedForCad(true);
+            if (!hasRunCadOnce.current) {
+              hasRunCadOnce.current = true;
+              handleRunOpenSCAD();
+            }
+
+          } else if (type === "error") {
+            console.error("Planner SSE error:", event.detail);
+          }
+        }
       }
     } catch (e) {
       console.error("Planner error:", e);
     } finally {
       setPlannerLoading(false);
+      setTargetedBlockIds(new Set());
+      setProcessingUpToEntry(null);
     }
-  }, []);
+  }, [handleRunOpenSCAD]);
 
   useScribe({
     stream: conference.localStream,
@@ -161,7 +217,6 @@ export default function ConferencePage() {
   const handleJoin = useCallback(
     async (name: string) => {
       setDisplayName(name);
-      // Create a backend meeting to track transcript + plan blocks
       try {
         const res = await fetch("/api/meetings", {
           method: "POST",
@@ -252,6 +307,8 @@ export default function ConferencePage() {
       onSendChat={handleSendChat}
       planBlocks={planBlocks}
       plannerLoading={plannerLoading}
+      targetedBlockIds={targetedBlockIds}
+      processingUpToEntry={processingUpToEntry}
       onRunPlanner={transcriptUpdated ? handleRunPlanner : undefined}
       cadCode={cadCode}
       cadLoading={cadLoading}

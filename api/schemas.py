@@ -5,6 +5,8 @@ from enum import Enum
 from typing import Annotated, List, Literal, Optional, Union
 from uuid import UUID, uuid4
 
+
+
 from pydantic import BaseModel, Field
 
 
@@ -69,12 +71,26 @@ class TranscriptEntry(BaseModel):
     end_time: float = Field(ge=0.0, description="Seconds from start of audio stream")
 
 
+class ScriptEdit(BaseModel):
+    """A search-and-replace edit to an OpenSCAD script."""
+    search: str
+    replace: str
+
+
+class ModelDelta(BaseModel):
+    """Records what changed between two model iterations — used by version control."""
+    changed_block_ids: List[UUID]
+    edits: List[ScriptEdit]
+    is_full_regen: bool
+
+
 class ModelIteration(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     script: str = Field(min_length=10, description="Raw, valid OpenSCAD code. No markdown formatting.")
     reasoning: str = Field(description="Agent's justification for geometric decisions in this version")
     applied_lessons: List[str] = Field(default_factory=list, description="MuBit memory utilised")
+    delta: Optional[ModelDelta] = Field(default=None, description="What changed from the previous iteration")
 
 
 class Meeting(BaseModel):

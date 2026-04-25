@@ -11,6 +11,8 @@ class _Store:
         self.blocks: Dict[UUID, List[PlanBlock]] = {}
         self.block_index: Dict[UUID, UUID] = {}  # block_id -> meeting_id
         self.models: Dict[UUID, List[ModelIteration]] = {}
+        self.processed_counts: Dict[UUID, int] = {}  # meeting_id → last processed transcript entry index
+        self.model_block_snapshots: Dict[UUID, set] = {}  # meeting_id → block IDs present at last model run
 
     def require_meeting(self, meeting_id: UUID) -> Meeting:
         m = self.meetings.get(meeting_id)

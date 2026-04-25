@@ -15,9 +15,21 @@ export async function POST(
   } catch (e) {
     return Response.json({ detail: `Upstream error: ${e}` }, { status: 502 });
   }
-  const body = await upstream.arrayBuffer();
-  return new Response(body, {
-    status: upstream.status,
-    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+
+  if (!upstream.ok || !upstream.body) {
+    const body = await upstream.arrayBuffer();
+    return new Response(body, {
+      status: upstream.status,
+      headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+    });
+  }
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      "x-accel-buffering": "no",
+    },
   });
 }

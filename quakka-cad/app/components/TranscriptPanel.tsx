@@ -87,12 +87,14 @@ export default function TranscriptPanel({
   onDownload,
   onClear,
   onSendChat,
+  processingUpToEntry,
 }: {
   lines: TranscriptLine[];
   partials: Map<string, PartialLine>;
   onDownload: () => void;
   onClear?: () => void;
   onSendChat?: (text: string) => void;
+  processingUpToEntry?: number | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -186,12 +188,35 @@ export default function TranscriptPanel({
           </p>
         )}
 
-        {lines.map((line) => (
-          <div key={line.id} className="text-sm">
-            <span className="font-medium text-zinc-300">{line.speakerName}: </span>
-            <span className="text-zinc-400">{line.text}</span>
-          </div>
-        ))}
+        {lines.flatMap((line, idx) => {
+          const lineEl = (
+            <div key={line.id} className="text-sm">
+              <span className="font-medium text-zinc-300">{line.speakerName}: </span>
+              <span className="text-zinc-400">{line.text}</span>
+            </div>
+          );
+          // Insert scan cursor divider after the last line that has been processed
+          if (
+            processingUpToEntry != null &&
+            idx === processingUpToEntry - 1 &&
+            processingUpToEntry < lines.length
+          ) {
+            return [
+              lineEl,
+              <div
+                key={`cursor-${processingUpToEntry}`}
+                className="flex items-center gap-2 my-1"
+              >
+                <div className="flex-1 h-px bg-indigo-500/40" />
+                <span className="text-[10px] text-indigo-400 font-mono animate-pulse whitespace-nowrap">
+                  ▶ scanning
+                </span>
+                <div className="flex-1 h-px bg-indigo-500/40" />
+              </div>,
+            ];
+          }
+          return [lineEl];
+        })}
 
         {partialEntries.map((p) => (
           <div key={`partial-${p.peerId}`} className="text-sm italic text-zinc-600">

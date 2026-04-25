@@ -198,21 +198,21 @@ function MissingInfoBlock({
   );
 }
 
-function Block({ block, loading, index }: { block: PlanBlock; loading: boolean; index: number }) {
+function Block({ block, isTargeted, index }: { block: PlanBlock; isTargeted: boolean; index: number }) {
   const inner = (() => {
     switch (block.content.block_type) {
       case "objective":
-        return <ObjectiveBlock block={block as PlanBlock & { content: ObjectiveContent }} loading={loading} />;
+        return <ObjectiveBlock block={block as PlanBlock & { content: ObjectiveContent }} loading={isTargeted} />;
       case "variable":
-        return <VariableBlock block={block as PlanBlock & { content: VariableContent }} loading={loading} />;
+        return <VariableBlock block={block as PlanBlock & { content: VariableContent }} loading={isTargeted} />;
       case "decision":
-        return <DecisionBlock block={block as PlanBlock & { content: DecisionContent }} loading={loading} />;
+        return <DecisionBlock block={block as PlanBlock & { content: DecisionContent }} loading={isTargeted} />;
       case "missing_info":
-        return <MissingInfoBlock block={block as PlanBlock & { content: MissingInfoContent }} loading={loading} />;
+        return <MissingInfoBlock block={block as PlanBlock & { content: MissingInfoContent }} loading={isTargeted} />;
     }
   })();
 
-  if (!loading) return inner;
+  if (!isTargeted) return inner;
 
   return (
     <RainbowBorder index={index}>{inner}</RainbowBorder>
@@ -226,10 +226,11 @@ function Block({ block, loading, index }: { block: PlanBlock; loading: boolean; 
 interface PlanSidebarProps {
   blocks: PlanBlock[];
   isLoading?: boolean;
+  targetedBlockIds?: Set<string>;
   onRunPlanner?: () => void;
 }
 
-export default function PlanSidebar({ blocks, isLoading = false, onRunPlanner }: PlanSidebarProps) {
+export default function PlanSidebar({ blocks, isLoading = false, targetedBlockIds, onRunPlanner }: PlanSidebarProps) {
   const objectiveCount = blocks.filter((b) => b.content.block_type === "objective").length;
   const variableCount = blocks.filter((b) => b.content.block_type === "variable").length;
   const missingCount = blocks.filter((b) => b.content.block_type === "missing_info").length;
@@ -291,7 +292,12 @@ export default function PlanSidebar({ blocks, isLoading = false, onRunPlanner }:
         )}
 
         {blocks.map((block, i) => (
-          <Block key={block.id} block={block} loading={isLoading} index={i} />
+          <Block
+            key={block.id}
+            block={block}
+            isTargeted={targetedBlockIds?.has(block.id) ?? false}
+            index={i}
+          />
         ))}
       </div>
     </div>

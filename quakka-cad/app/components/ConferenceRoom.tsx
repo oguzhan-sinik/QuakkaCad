@@ -34,6 +34,8 @@ interface ConferenceRoomProps {
   onSendChat: (text: string) => void;
   planBlocks: PlanBlock[];
   plannerLoading: boolean;
+  targetedBlockIds: Set<string>;
+  processingUpToEntry: number | null;
   onRunPlanner?: () => void;
   cadCode?: string | null;
   cadLoading?: boolean;
@@ -54,6 +56,8 @@ export default function ConferenceRoom({
   onSendChat,
   planBlocks,
   plannerLoading,
+  targetedBlockIds,
+  processingUpToEntry,
   onRunPlanner,
   cadCode,
   cadLoading,
@@ -86,7 +90,12 @@ export default function ConferenceRoom({
       {/* Three-column layout */}
       <div className="flex-1 flex gap-4 min-h-0">
         {/* Left column — Plan Sidebar */}
-        <PlanSidebar blocks={planBlocks} isLoading={plannerLoading} onRunPlanner={onRunPlanner} />
+        <PlanSidebar
+          blocks={planBlocks}
+          isLoading={plannerLoading}
+          targetedBlockIds={targetedBlockIds}
+          onRunPlanner={onRunPlanner}
+        />
 
         {/* Middle column — CAD Panel (tabs + prompt) */}
         <CadPanel cadCode={cadCode} cadLoading={cadLoading} onUpdateCad={onUpdateCad} />
@@ -100,6 +109,7 @@ export default function ConferenceRoom({
             onDownload={onDownloadTranscript}
             onClear={onClearTranscript}
             onSendChat={onSendChat}
+            processingUpToEntry={processingUpToEntry}
           />
 
           {/* Attendee list */}
