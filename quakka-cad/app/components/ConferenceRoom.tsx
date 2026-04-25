@@ -110,6 +110,7 @@ export default function ConferenceRoom({
             onClear={onClearTranscript}
             onSendChat={onSendChat}
             processingUpToEntry={processingUpToEntry}
+            isScanning={plannerLoading}
           />
 
           {/* Attendee list */}

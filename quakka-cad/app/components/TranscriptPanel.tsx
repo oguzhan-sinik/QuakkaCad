@@ -88,6 +88,7 @@ export default function TranscriptPanel({
   onClear,
   onSendChat,
   processingUpToEntry,
+  isScanning,
 }: {
   lines: TranscriptLine[];
   partials: Map<string, PartialLine>;
@@ -95,6 +96,7 @@ export default function TranscriptPanel({
   onClear?: () => void;
   onSendChat?: (text: string) => void;
   processingUpToEntry?: number | null;
+  isScanning?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -103,12 +105,12 @@ export default function TranscriptPanel({
   const [chatOpen, setChatOpen] = useState(false);
   const [chatText, setChatText] = useState("");
 
-  // Auto-scroll on new lines
+  // Auto-scroll on new lines or when scan cursor first appears
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [lines, partials, autoScroll]);
+  }, [lines, partials, autoScroll, processingUpToEntry]);
 
   function handleScroll() {
     if (!scrollRef.current) return;
@@ -153,9 +155,14 @@ export default function TranscriptPanel({
     <div className="flex-1 flex flex-col bg-zinc-900 rounded-xl border border-zinc-700/50 min-h-0 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700/50 flex-shrink-0">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-          Live Transcript
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+            Live Transcript
+          </h3>
+          {isScanning && (
+            <span className="text-[10px] text-indigo-400 font-mono animate-pulse">▶ scanning</span>
+          )}
+        </div>
         {lines.length > 0 && (
           <div className="flex items-center gap-1.5">
             <button
