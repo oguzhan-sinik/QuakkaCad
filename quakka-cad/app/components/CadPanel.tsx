@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useGestureControls } from "../hooks/useGestureControls";
 
 type Tab = "code" | "preview";
 
@@ -72,6 +73,11 @@ export default function CadPanel({
     targetZ: 0,
   });
   const keysRef = useRef<Set<string>>(new Set());
+
+  const [gestureEnabled, setGestureEnabled] = useState(false);
+  const gestureVideoRef = useRef<HTMLVideoElement>(null);
+  const { currentGesture, isReady: gestureReady, error: gestureError, videoDevices, selectedDeviceId, switchCamera } =
+    useGestureControls({ orbitRef, videoRef: gestureVideoRef, enabled: gestureEnabled });
 
   function log(msg: string) {
     console.log(`[CadPanel] ${msg}`);
@@ -528,6 +534,22 @@ export default function CadPanel({
         </button>
         <div className="ml-auto flex items-center gap-3 pr-3">
           <button
+            onClick={() => setGestureEnabled(v => !v)}
+            title="Toggle gesture controls (webcam)"
+            className={`text-xs px-2.5 py-1 rounded transition-colors flex items-center gap-1.5 border ${
+              gestureEnabled
+                ? "bg-teal-700 border-teal-500 text-white"
+                : "bg-zinc-800 border-zinc-600 text-zinc-300 hover:bg-zinc-700"
+            }`}
+          >
+            {gestureEnabled && !gestureReady ? (
+              <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+              </svg>
+            ) : "✋"} Gesture
+          </button>
+          <button
             onClick={onRefine}
             disabled={!onRefine || refineLoading || cadLoading}
             className="text-xs px-2.5 py-1 bg-amber-600 text-white rounded hover:bg-amber-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
@@ -639,6 +661,39 @@ export default function CadPanel({
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
                 Compiling with OpenSCAD WASM...
+              </div>
+            </div>
+          )}
+
+          {/* Gesture webcam overlay */}
+          {gestureEnabled && (
+            <div className="absolute bottom-10 right-2 flex flex-col items-end gap-1 pointer-events-none z-10">
+              <video
+                ref={gestureVideoRef}
+                className="w-36 h-28 rounded-lg border border-teal-600/50 object-cover"
+                style={{ transform: "scaleX(-1)" }}
+                autoPlay
+                muted
+                playsInline
+              />
+              <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-900/80 text-teal-300 font-mono">
+                {gestureError ? `⚠ ${gestureError}` : !gestureReady ? "Loading..." : currentGesture || "No hand"}
+              </span>
+              {gestureReady && videoDevices.length > 1 && (
+                <select
+                  value={selectedDeviceId}
+                  onChange={e => switchCamera(e.target.value)}
+                  className="pointer-events-auto text-[9px] bg-zinc-900/90 border border-zinc-700 text-zinc-300 rounded px-1 py-0.5 max-w-[144px] truncate"
+                >
+                  {videoDevices.map(d => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <div className="text-[9px] text-zinc-500 bg-zinc-900/70 rounded px-1.5 py-0.5 text-right leading-relaxed">
+                ✊ fist=rotate · 🖐 palm=pan<br />👍/👎 zoom · ✌️ reset
               </div>
             </div>
           )}
