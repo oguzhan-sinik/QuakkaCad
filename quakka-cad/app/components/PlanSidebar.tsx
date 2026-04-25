@@ -240,6 +240,12 @@ export default function PlanSidebar({ blocks, isLoading = false, onRunPlanner }:
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700/50 flex-shrink-0">
         <div className="flex items-center gap-2">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Plan</h3>
+          {isLoading && (
+            <svg className="animate-spin h-3 w-3 text-indigo-400" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+            </svg>
+          )}
           {blocks.length > 0 && (
             <span className="text-[10px] text-zinc-600">{blocks.length} blocks</span>
           )}

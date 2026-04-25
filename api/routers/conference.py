@@ -164,6 +164,12 @@ async def signaling_ws(ws: WebSocket, conference_id: str):
 
                 await _broadcast(room, None, transcript_msg)
 
+            elif msg_type == "plan-update":
+                await _broadcast(room, peer_id, {
+                    "type": "plan-update",
+                    "blocks": msg.get("blocks", []),
+                })
+
     except WebSocketDisconnect:
         pass
     finally:

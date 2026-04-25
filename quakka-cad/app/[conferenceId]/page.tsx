@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PlanBlock } from "../components/PlanSidebar";
 import { useConference } from "../lib/useConference";
 import { useScribe } from "../lib/useScribe";
@@ -25,16 +25,21 @@ export default function ConferencePage() {
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [planBlocks, setPlanBlocks] = useState<PlanBlock[]>([]);
   const [plannerLoading, setPlannerLoading] = useState(false);
+  const [transcriptUpdated, setTranscriptUpdated] = useState(false);
   const postedCountRef = useRef(0);
   const linesRef = useRef(lines);
   linesRef.current = lines;
   const meetingIdRef = useRef(meetingId);
   meetingIdRef.current = meetingId;
+  const plannerLoadingRef = useRef(false);
+  plannerLoadingRef.current = plannerLoading;
+  const lastPlannerLinesRef = useRef(0);
 
   const conference = useConference({
     conferenceId,
     displayName,
     onTranscript: handleTranscript,
+    onPlanUpdate: (blocks) => setPlanBlocks(blocks as PlanBlock[]),
   });
 
   // When Scribe produces a transcript:
@@ -56,11 +61,67 @@ export default function ConferencePage() {
     [conference.sendTranscript, handleTranscript]
   );
 
+  useEffect(() => {
+    if (lines.length > 0) setTranscriptUpdated(true);
+  }, [lines.length]);
+
+  const handleRunPlanner = useCallback(async () => {
+    const mid = meetingIdRef.current;
+    if (!mid || plannerLoadingRef.current) return;
+    lastPlannerLinesRef.current = linesRef.current.length;
+    setTranscriptUpdated(false);
+    setPlannerLoading(true);
+    try {
+      // Sync any unposted committed lines to the backend transcript
+      const currentLines = linesRef.current;
+      const t0 = currentLines[0]?.timestamp ?? Date.now();
+      const unposted = currentLines.slice(postedCountRef.current);
+      for (const line of unposted) {
+        const start = (line.timestamp - t0) / 1000;
+        await fetch(`/api/meetings/${mid}/transcript`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: `${line.speakerName}: ${line.text}`,
+            start_time: start,
+            end_time: start + 1,
+          }),
+        });
+      }
+      postedCountRef.current = currentLines.length;
+
+      // Run the planner agent
+      const res = await fetch(`/api/meetings/${mid}/agent/plan`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+
+      setPlanBlocks((prev) => {
+        const updatedIds = new Set<string>(result.updated.map((b: PlanBlock) => b.id));
+        return [...prev.filter((b) => !updatedIds.has(b.id)), ...result.updated, ...result.created];
+      });
+      conference.sendPlanUpdate([...result.updated, ...result.created]);
+    } catch (e) {
+      console.error("Planner error:", e);
+    } finally {
+      setPlannerLoading(false);
+    }
+  }, []);
+
   useScribe({
     stream: conference.localStream,
     isMuted: conference.isMuted,
     onTranscript: onScribeTranscript,
   });
+
+  useEffect(() => {
+    if (!meetingId) return;
+    const id = setInterval(() => {
+      if (!plannerLoadingRef.current && linesRef.current.length > lastPlannerLinesRef.current) {
+        handleRunPlanner();
+      }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [meetingId, handleRunPlanner]);
 
   const handleJoin = useCallback(
     async (name: string) => {
@@ -96,45 +157,6 @@ export default function ConferencePage() {
     },
     [conference.sendTranscript, handleTranscript],
   );
-
-  const handleRunPlanner = useCallback(async () => {
-    const mid = meetingIdRef.current;
-    if (!mid || plannerLoading) return;
-    setPlannerLoading(true);
-    try {
-      // Sync any unposted committed lines to the backend transcript
-      const currentLines = linesRef.current;
-      const t0 = currentLines[0]?.timestamp ?? Date.now();
-      const unposted = currentLines.slice(postedCountRef.current);
-      for (const line of unposted) {
-        const start = (line.timestamp - t0) / 1000;
-        await fetch(`/api/meetings/${mid}/transcript`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: `${line.speakerName}: ${line.text}`,
-            start_time: start,
-            end_time: start + 1,
-          }),
-        });
-      }
-      postedCountRef.current = currentLines.length;
-
-      // Run the planner agent
-      const res = await fetch(`/api/meetings/${mid}/agent/plan`, { method: "POST" });
-      if (!res.ok) throw new Error(await res.text());
-      const result = await res.json();
-
-      setPlanBlocks((prev) => {
-        const updatedIds = new Set<string>(result.updated.map((b: PlanBlock) => b.id));
-        return [...prev.filter((b) => !updatedIds.has(b.id)), ...result.updated, ...result.created];
-      });
-    } catch (e) {
-      console.error("Planner error:", e);
-    } finally {
-      setPlannerLoading(false);
-    }
-  }, [plannerLoading]);
 
   if (phase === "join" && conference.isConnected) {
     setPhase("connected");
@@ -194,7 +216,7 @@ export default function ConferencePage() {
       onSendChat={handleSendChat}
       planBlocks={planBlocks}
       plannerLoading={plannerLoading}
-      onRunPlanner={handleRunPlanner}
+      onRunPlanner={transcriptUpdated ? handleRunPlanner : undefined}
     />
   );
 }

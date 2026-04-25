@@ -20,13 +20,14 @@ interface UseConferenceOptions {
   conferenceId: string;
   displayName: string;
   onTranscript?: (event: TranscriptEvent) => void;
+  onPlanUpdate?: (blocks: unknown[]) => void;
 }
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
-export function useConference({ conferenceId, displayName, onTranscript }: UseConferenceOptions) {
+export function useConference({ conferenceId, displayName, onTranscript, onPlanUpdate }: UseConferenceOptions) {
   const [peers, setPeers] = useState<Peer[]>([]);
   const [myPeerId, setMyPeerId] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
@@ -42,6 +43,8 @@ export function useConference({ conferenceId, displayName, onTranscript }: UseCo
   const cleanedUpRef = useRef(false);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  const onPlanUpdateRef = useRef(onPlanUpdate);
+  onPlanUpdateRef.current = onPlanUpdate;
   const myPeerIdRef = useRef<string | null>(null);
 
   const cleanup = useCallback(() => {
@@ -243,6 +246,11 @@ export function useConference({ conferenceId, displayName, onTranscript }: UseCo
           });
           break;
         }
+
+        case "plan-update": {
+          onPlanUpdateRef.current?.(msg.blocks ?? []);
+          break;
+        }
       }
     };
 
@@ -286,6 +294,12 @@ export function useConference({ conferenceId, displayName, onTranscript }: UseCo
     }
   }, []);
 
+  const sendPlanUpdate = useCallback((blocks: unknown[]) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "plan-update", blocks }));
+    }
+  }, []);
+
   const leave = useCallback(() => {
     cleanup();
   }, [cleanup]);
@@ -308,6 +322,7 @@ export function useConference({ conferenceId, displayName, onTranscript }: UseCo
     toggleMute,
     leave,
     sendTranscript,
+    sendPlanUpdate,
     displayName,
   };
 }
