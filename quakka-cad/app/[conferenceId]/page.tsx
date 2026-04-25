@@ -132,8 +132,9 @@ export default function ConferencePage() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let streamEnded = false;
 
-      while (true) {
+      while (!streamEnded) {
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -183,12 +184,19 @@ export default function ConferencePage() {
               hasRunCadOnce.current = true;
               handleRunOpenSCAD();
             }
+            // Exit immediately — don't wait for the stream to close naturally,
+            // since Next.js dev may not propagate the backend's connection close.
+            streamEnded = true;
+            break;
 
           } else if (type === "error") {
             console.error("Planner SSE error:", event.detail);
+            streamEnded = true;
+            break;
           }
         }
       }
+      reader.cancel().catch(() => {});
     } catch (e) {
       console.error("Planner error:", e);
     } finally {
