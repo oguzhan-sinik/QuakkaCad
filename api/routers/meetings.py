@@ -3,6 +3,8 @@ from __future__ import annotations
 from enum import Enum
 from uuid import UUID
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
@@ -178,6 +180,8 @@ async def trigger_planner(
             temperature=temperature,
             max_tokens=max_tokens,
         )
+    except asyncio.CancelledError:
+        raise
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -223,6 +227,8 @@ async def trigger_openscad(
             temperature=temperature,
             max_tokens=max_tokens,
         )
+    except asyncio.CancelledError:
+        raise
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:

@@ -30,10 +30,14 @@ interface ConferenceRoomProps {
   transcriptLines: TranscriptLine[];
   transcriptPartials: Map<string, PartialLine>;
   onDownloadTranscript: () => void;
+  onClearTranscript: () => void;
   onSendChat: (text: string) => void;
   planBlocks: PlanBlock[];
   plannerLoading: boolean;
-  onRunPlanner: () => void;
+  onRunPlanner?: () => void;
+  cadCode?: string | null;
+  cadLoading?: boolean;
+  onUpdateCad?: () => void;
 }
 
 export default function ConferenceRoom({
@@ -46,10 +50,14 @@ export default function ConferenceRoom({
   transcriptLines,
   transcriptPartials,
   onDownloadTranscript,
+  onClearTranscript,
   onSendChat,
   planBlocks,
   plannerLoading,
   onRunPlanner,
+  cadCode,
+  cadLoading,
+  onUpdateCad,
 }: ConferenceRoomProps) {
   const shareUrl = typeof window !== "undefined"
     ? `${window.location.origin}/${conferenceId}`
@@ -81,7 +89,7 @@ export default function ConferenceRoom({
         <PlanSidebar blocks={planBlocks} isLoading={plannerLoading} onRunPlanner={onRunPlanner} />
 
         {/* Middle column — CAD Panel (tabs + prompt) */}
-        <CadPanel />
+        <CadPanel cadCode={cadCode} cadLoading={cadLoading} onUpdateCad={onUpdateCad} />
 
         {/* Right column — Transcript + Attendees + Controls */}
         <div className="flex-1 flex flex-col gap-3 min-h-0">
@@ -90,6 +98,7 @@ export default function ConferenceRoom({
             lines={transcriptLines}
             partials={transcriptPartials}
             onDownload={onDownloadTranscript}
+            onClear={onClearTranscript}
             onSendChat={onSendChat}
           />
 

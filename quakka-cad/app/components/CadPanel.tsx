@@ -13,7 +13,13 @@ interface GenerateResult {
   tokens_per_second: number | null;
 }
 
-export default function CadPanel() {
+interface CadPanelProps {
+  cadCode?: string | null;
+  cadLoading?: boolean;
+  onUpdateCad?: () => void;
+}
+
+export default function CadPanel({ cadCode, cadLoading = false, onUpdateCad }: CadPanelProps) {
   const [tab, setTab] = useState<Tab>("code");
   const [prompt, setPrompt] = useState("");
   const [code, setCode] = useState("");
@@ -37,6 +43,12 @@ export default function CadPanel() {
   const codeRef = useRef(code);
   codeRef.current = code;
   const compiledCodeRef = useRef<string>("");
+
+  useEffect(() => {
+    if (cadCode == null) return;
+    setCode(cadCode);
+    compiledCodeRef.current = "";
+  }, [cadCode]);
 
   // Camera orbit state
   // rotY = azimuth (horizontal rotation), rotX = elevation (vertical tilt)
@@ -562,13 +574,30 @@ export default function CadPanel() {
         >
           3D Preview
         </button>
-        {meta && (
-          <div className="ml-auto pr-3 text-[10px] text-zinc-500 flex gap-3">
-            <span>{meta.provider}</span>
-            <span>{Math.round(meta.latency_ms)}ms</span>
-            {meta.tokens_per_second && <span>{meta.tokens_per_second} tok/s</span>}
-          </div>
-        )}
+        <div className="ml-auto flex items-center gap-3 pr-3">
+          <button
+            onClick={onUpdateCad}
+            disabled={!onUpdateCad || cadLoading}
+            className="text-xs px-2.5 py-1 bg-violet-600 text-white rounded hover:bg-violet-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+          >
+            {cadLoading ? (
+              <>
+                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+                Generating...
+              </>
+            ) : "Update 3D"}
+          </button>
+          {meta && (
+            <div className="text-[10px] text-zinc-500 flex gap-3">
+              <span>{meta.provider}</span>
+              <span>{Math.round(meta.latency_ms)}ms</span>
+              {meta.tokens_per_second && <span>{meta.tokens_per_second} tok/s</span>}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Content area — both tabs always mounted, toggled via CSS */}

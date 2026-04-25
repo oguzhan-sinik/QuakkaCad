@@ -20,12 +20,18 @@ export default function ConferencePage() {
   const displayNameRef = useRef(displayName);
   displayNameRef.current = displayName;
 
-  const { lines, partials, handleTranscript, downloadTranscript } = useTranscript();
+  const { lines, partials, handleTranscript, downloadTranscript, clearTranscript } = useTranscript();
 
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [planBlocks, setPlanBlocks] = useState<PlanBlock[]>([]);
   const [plannerLoading, setPlannerLoading] = useState(false);
   const [transcriptUpdated, setTranscriptUpdated] = useState(false);
+  const [cadCode, setCadCode] = useState<string | null>(null);
+  const [cadLoading, setCadLoading] = useState(false);
+  const [planUpdatedForCad, setPlanUpdatedForCad] = useState(false);
+  const cadLoadingRef = useRef(false);
+  cadLoadingRef.current = cadLoading;
+  const hasRunCadOnce = useRef(false);
   const postedCountRef = useRef(0);
   const linesRef = useRef(lines);
   linesRef.current = lines;
@@ -65,6 +71,30 @@ export default function ConferencePage() {
     if (lines.length > 0) setTranscriptUpdated(true);
   }, [lines.length]);
 
+  const handleClearTranscript = useCallback(() => {
+    clearTranscript();
+    postedCountRef.current = 0;
+    lastPlannerLinesRef.current = 0;
+    setTranscriptUpdated(false);
+  }, [clearTranscript]);
+
+  const handleRunOpenSCAD = useCallback(async () => {
+    const mid = meetingIdRef.current;
+    if (!mid || cadLoadingRef.current) return;
+    setPlanUpdatedForCad(false);
+    setCadLoading(true);
+    try {
+      const res = await fetch(`/api/meetings/${mid}/agent/model`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      setCadCode(result.iteration.script);
+    } catch (e) {
+      console.error("OpenSCAD agent error:", e);
+    } finally {
+      setCadLoading(false);
+    }
+  }, []);
+
   const handleRunPlanner = useCallback(async () => {
     const mid = meetingIdRef.current;
     if (!mid || plannerLoadingRef.current) return;
@@ -100,6 +130,11 @@ export default function ConferencePage() {
         return [...prev.filter((b) => !updatedIds.has(b.id)), ...result.updated, ...result.created];
       });
       conference.sendPlanUpdate([...result.updated, ...result.created]);
+      setPlanUpdatedForCad(true);
+      if (!hasRunCadOnce.current) {
+        hasRunCadOnce.current = true;
+        handleRunOpenSCAD();
+      }
     } catch (e) {
       console.error("Planner error:", e);
     } finally {
@@ -213,10 +248,14 @@ export default function ConferencePage() {
       transcriptLines={lines}
       transcriptPartials={partials}
       onDownloadTranscript={downloadTranscript}
+      onClearTranscript={handleClearTranscript}
       onSendChat={handleSendChat}
       planBlocks={planBlocks}
       plannerLoading={plannerLoading}
       onRunPlanner={transcriptUpdated ? handleRunPlanner : undefined}
+      cadCode={cadCode}
+      cadLoading={cadLoading}
+      onUpdateCad={planUpdatedForCad ? handleRunOpenSCAD : undefined}
     />
   );
 }

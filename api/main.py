@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import logfire
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,8 @@ from agents import PROVIDER_CONFIG  # noqa: E402
 from routers.conference import router as conference_router
 from routers.generate import router as generate_router
 from routers.meetings import router as meetings_router
+
+logfire.configure(service_name="quakkacad-api")
 
 app = FastAPI(
     title="QuakkaCad API",
@@ -29,6 +32,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logfire.instrument_fastapi(app)
 
 app.include_router(generate_router)
 app.include_router(meetings_router)

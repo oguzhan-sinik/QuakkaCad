@@ -73,18 +73,25 @@ export function useTranscript() {
     URL.revokeObjectURL(url);
   }, [lines]);
 
-  return { lines, partials, handleTranscript, downloadTranscript };
+  const clearTranscript = useCallback(() => {
+    setLines([]);
+    setPartials(new Map());
+  }, []);
+
+  return { lines, partials, handleTranscript, downloadTranscript, clearTranscript };
 }
 
 export default function TranscriptPanel({
   lines,
   partials,
   onDownload,
+  onClear,
   onSendChat,
 }: {
   lines: TranscriptLine[];
   partials: Map<string, PartialLine>;
   onDownload: () => void;
+  onClear?: () => void;
   onSendChat?: (text: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -148,12 +155,22 @@ export default function TranscriptPanel({
           Live Transcript
         </h3>
         {lines.length > 0 && (
-          <button
-            onClick={onDownload}
-            className="text-xs px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
-          >
-            Download
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={onDownload}
+              className="text-xs px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Download
+            </button>
+            {onClear && (
+              <button
+                onClick={onClear}
+                className="text-xs px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-zinc-400 hover:text-red-400 transition-colors"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         )}
       </div>
 
