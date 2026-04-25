@@ -38,7 +38,7 @@ export default function ConferencePage() {
   modelIterationsRef.current = modelIterations;
   const cadLoadingRef = useRef(false);
   cadLoadingRef.current = cadLoading;
-  const hasRunCadOnce = useRef(false);
+
   const postedCountRef = useRef(0);
   const linesRef = useRef(lines);
   linesRef.current = lines;
@@ -192,8 +192,7 @@ export default function ConferencePage() {
               return prev;
             });
             setPlanUpdatedForCad(true);
-            if (!hasRunCadOnce.current && blocksCreatedThisRun > 0) {
-              hasRunCadOnce.current = true;
+            if (blocksCreatedThisRun > 0) {
               handleRunOpenSCAD();
             }
             // Exit immediately — don't wait for the stream to close naturally,

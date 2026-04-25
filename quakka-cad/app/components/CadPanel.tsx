@@ -1,18 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Tab = "code" | "preview";
-
-interface GenerateResult {
-  openscad_code: string;
-  provider: string;
-  model_used: string;
-  latency_ms: number;
-  usage: Record<string, number>;
-  tokens_per_second: number | null;
-  session_id: string;
-}
 
 export interface ModelIteration {
   id: string;
@@ -39,18 +29,10 @@ export default function CadPanel({
   viewingVersionId,
   onSelectVersion,
 }: CadPanelProps) {
-  const [tab, setTab] = useState<Tab>("code");
-  const [prompt, setPrompt] = useState("");
+  const [tab, setTab] = useState<Tab>("preview");
   const [code, setCode] = useState("");
-  const [loading, setLoading] = useState(false);
   const [compiling, setCompiling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [debugLog, setDebugLog] = useState<string[]>([]);
-  const [meta, setMeta] = useState<{
-    provider: string;
-    latency_ms: number;
-    tokens_per_second: number | null;
-  } | null>(null);
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<any>(null);
@@ -62,7 +44,6 @@ export default function CadPanel({
   const codeRef = useRef(code);
   codeRef.current = code;
   const compiledCodeRef = useRef<string>("");
-  const sessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (cadCode == null) return;
@@ -190,17 +171,6 @@ export default function CadPanel({
     return workerRef.current;
   }
 
-  // Report compilation outcome to MuBit via backend
-  function reportOutcome(success: boolean, error?: string) {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    fetch("/api/generate/outcome", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sid, success, error: error || null }),
-    }).catch(() => {}); // fire-and-forget
-  }
-
   function compileAndRender(scadCode: string) {
     if (compiledCodeRef.current === scadCode) {
       log("Code unchanged, skipping recompile");
@@ -229,7 +199,6 @@ export default function CadPanel({
           worker.removeEventListener("message", handler);
           setCompiling(false);
           compiledCodeRef.current = scadCode;
-          reportOutcome(true);
           if (e.data.format === "stl" && e.data.stl) {
             log("Compilation done (STL) — loading mesh...");
             loadSTL(e.data.stl);
@@ -245,7 +214,6 @@ export default function CadPanel({
         case "error": {
           worker.removeEventListener("message", handler);
           setCompiling(false);
-          reportOutcome(false, e.data.text);
           log(`Compile error: ${e.data.text}`);
           break;
         }
@@ -517,71 +485,16 @@ export default function CadPanel({
     orbitRef.current.dist = Math.max(1, orbitRef.current.dist * (1 + e.deltaY * 0.001));
   }
 
-  // --- Keyboard controls (WASD + QE + Arrows) ---
-  useEffect(() => {
-    if (tab !== "preview") return;
-    function onKeyDown(e: KeyboardEvent) {
-      const key = e.key.toLowerCase();
-      if (["w", "a", "s", "d", "q", "e", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
-        e.preventDefault();
-        keysRef.current.add(key);
-      }
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      keysRef.current.delete(e.key.toLowerCase());
-    }
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      keysRef.current.clear();
-    };
-  }, [tab]);
-
-  // --- Generate via API ---
-  async function handleGenerate() {
-    if (!prompt.trim() || loading) return;
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: prompt.trim(),
-          provider: "pydantic",
-          temperature: 0.75,
-          max_tokens: 8192,
-        }),
-      });
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}));
-        throw new Error(detail.detail || `HTTP ${res.status}`);
-      }
-      const data: GenerateResult = await res.json();
-      setCode(data.openscad_code);
-      sessionIdRef.current = data.session_id;
-      setMeta({
-        provider: data.provider,
-        latency_ms: data.latency_ms,
-        tokens_per_second: data.tokens_per_second,
-      });
-      compiledCodeRef.current = ""; // force recompile
-      setTab("code");
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+  // --- Keyboard controls (WASD + QE + Arrows) — only when the viewport is focused ---
+  function onPreviewKeyDown(e: React.KeyboardEvent) {
+    const key = e.key.toLowerCase();
+    if (["w", "a", "s", "d", "q", "e", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
+      e.preventDefault();
+      keysRef.current.add(key);
     }
   }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      handleGenerate();
-    }
+  function onPreviewKeyUp(e: React.KeyboardEvent) {
+    keysRef.current.delete(e.key.toLowerCase());
   }
 
   return (
@@ -624,13 +537,6 @@ export default function CadPanel({
               </>
             ) : "Update 3D"}
           </button>
-          {meta && (
-            <div className="text-[10px] text-zinc-500 flex gap-3">
-              <span>{meta.provider}</span>
-              <span>{Math.round(meta.latency_ms)}ms</span>
-              {meta.tokens_per_second && <span>{meta.tokens_per_second} tok/s</span>}
-            </div>
-          )}
         </div>
       </div>
 
@@ -672,7 +578,7 @@ export default function CadPanel({
           <textarea
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="Paste OpenSCAD code here or generate with a prompt below..."
+            placeholder="Paste OpenSCAD code here..."
             spellCheck={false}
             className="flex-1 w-full bg-transparent p-4 text-xs font-mono text-zinc-300 leading-relaxed resize-none focus:outline-none placeholder-zinc-600"
           />
@@ -698,6 +604,9 @@ export default function CadPanel({
           onMouseLeave={onMouseUp}
           onContextMenu={onContextMenu}
           onWheel={onWheel}
+          onKeyDown={onPreviewKeyDown}
+          onKeyUp={onPreviewKeyUp}
+          onBlur={() => keysRef.current.clear()}
         >
           <div ref={canvasContainerRef} className="absolute inset-0" />
 
@@ -725,46 +634,12 @@ export default function CadPanel({
 
           {!code && tab === "preview" && (
             <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm pointer-events-none">
-              Generate or paste code first
+              Paste or generate code first
             </div>
           )}
         </div>
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/30 text-red-400 text-xs flex-shrink-0">
-          {error}
-        </div>
-      )}
-
-      {/* Prompt input */}
-      <div className="flex-shrink-0 border-t border-zinc-700/50 p-3">
-        <div className="flex gap-2">
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Describe a 3D object... (Ctrl+Enter to generate)"
-            rows={2}
-            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 resize-none focus:outline-none focus:border-violet-500 transition-colors"
-          />
-          <button
-            onClick={handleGenerate}
-            disabled={loading || !prompt.trim()}
-            className="px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors self-end"
-          >
-            {loading ? (
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
-              "Generate"
-            )}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
