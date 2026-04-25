@@ -8,7 +8,7 @@ interface AttendeeListProps {
 
 export default function AttendeeList({ peers, myName, isMuted }: AttendeeListProps) {
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
+    <div className="max-h-40 min-h-0 overflow-y-auto">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-3">
         Attendees ({peers.length + 1})
       </h3>
