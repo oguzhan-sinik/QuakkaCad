@@ -11,6 +11,7 @@ interface GenerateResult {
   latency_ms: number;
   usage: Record<string, number>;
   tokens_per_second: number | null;
+  session_id: string;
 }
 
 interface CadPanelProps {
@@ -43,6 +44,7 @@ export default function CadPanel({ cadCode, cadLoading = false, onUpdateCad }: C
   const codeRef = useRef(code);
   codeRef.current = code;
   const compiledCodeRef = useRef<string>("");
+  const sessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (cadCode == null) return;
@@ -170,6 +172,17 @@ export default function CadPanel({ cadCode, cadLoading = false, onUpdateCad }: C
     return workerRef.current;
   }
 
+  // Report compilation outcome to MuBit via backend
+  function reportOutcome(success: boolean, error?: string) {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    fetch("/api/generate/outcome", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sid, success, error: error || null }),
+    }).catch(() => {}); // fire-and-forget
+  }
+
   function compileAndRender(scadCode: string) {
     if (compiledCodeRef.current === scadCode) {
       log("Code unchanged, skipping recompile");
@@ -198,6 +211,7 @@ export default function CadPanel({ cadCode, cadLoading = false, onUpdateCad }: C
           worker.removeEventListener("message", handler);
           setCompiling(false);
           compiledCodeRef.current = scadCode;
+          reportOutcome(true);
           if (e.data.format === "stl" && e.data.stl) {
             log("Compilation done (STL) — loading mesh...");
             loadSTL(e.data.stl);
@@ -213,6 +227,7 @@ export default function CadPanel({ cadCode, cadLoading = false, onUpdateCad }: C
         case "error": {
           worker.removeEventListener("message", handler);
           setCompiling(false);
+          reportOutcome(false, e.data.text);
           log(`Compile error: ${e.data.text}`);
           break;
         }
@@ -529,6 +544,7 @@ export default function CadPanel({ cadCode, cadLoading = false, onUpdateCad }: C
       }
       const data: GenerateResult = await res.json();
       setCode(data.openscad_code);
+      sessionIdRef.current = data.session_id;
       setMeta({
         provider: data.provider,
         latency_ms: data.latency_ms,

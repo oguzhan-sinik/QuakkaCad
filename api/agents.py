@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
+from mubit_client import get_generation_context, remember_generation
 from schemas import ModelIterationCreate, PlanBlock, PlanBlockCreate, ScriptEdit, TranscriptEntry
 
 load_dotenv(Path(__file__).parent / ".env")
@@ -232,20 +234,42 @@ async def run_generate(
     provider: str = "pydantic",
     temperature: float = 0.75,
     max_tokens: int = 8192,
+    session_id: str | None = None,
 ) -> tuple[str, dict]:
     _require_key(provider)
     cfg = PROVIDER_CONFIG[provider]
     agent = _get_generate_agent(provider)
 
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+
+    # Fetch lessons from MuBit before calling the LLM
+    mubit_context = await get_generation_context("openscad-generator", session_id)
+    enriched_prompt = prompt
+    if mubit_context:
+        enriched_prompt = (
+            f"LESSONS FROM PAST GENERATIONS (apply these to avoid past mistakes):\n"
+            f"{mubit_context}\n\n"
+            f"USER REQUEST:\n{prompt}"
+        )
+
     t0 = time.perf_counter()
     result = await agent.run(
-        prompt,
+        enriched_prompt,
         model_settings=_model_settings(provider, temperature, max_tokens),
     )
     latency_ms = (time.perf_counter() - t0) * 1000
 
     content = _strip_markdown_fences(result.output).strip()
-    return content, _build_meta(cfg, latency_ms, result.usage())
+
+    # Store the interaction in MuBit memory (fire-and-forget)
+    asyncio.create_task(
+        remember_generation("openscad-generator", session_id, prompt, content, cfg["model_name"])
+    )
+
+    meta = _build_meta(cfg, latency_ms, result.usage())
+    meta["session_id"] = session_id
+    return content, meta
 
 
 async def run_planner(
@@ -254,10 +278,14 @@ async def run_planner(
     provider: str = "pydantic",
     temperature: float = 0.3,
     max_tokens: int = 4096,
+    session_id: str | None = None,
 ) -> tuple[PlannerOutput, dict]:
     _require_key(provider)
     cfg = PROVIDER_CONFIG[provider]
     agent = _get_planner_agent(provider)
+
+    if session_id is None:
+        session_id = str(uuid.uuid4())
 
     transcript_text = "\n".join(
         f"[{e.start_time:.1f}s-{e.end_time:.1f}s] {e.text}" for e in transcript
@@ -267,7 +295,14 @@ async def run_planner(
         "\n".join(b.model_dump_json() for b in existing_blocks) if existing_blocks else "(none)"
     )
 
+    # Fetch lessons from MuBit
+    mubit_context = await get_generation_context("planner", session_id)
+    lessons_block = ""
+    if mubit_context:
+        lessons_block = f"LESSONS FROM PAST SESSIONS:\n{mubit_context}\n\n"
+
     prompt = (
+        f"{lessons_block}"
         f"TRANSCRIPT:\n{transcript_text}\n\n"
         f"EXISTING BLOCKS:\n{blocks_text}\n\n"
         "Analyse the transcript and return structured plan block updates."
@@ -279,6 +314,10 @@ async def run_planner(
         timeout=90,
     )
     latency_ms = (time.perf_counter() - t0) * 1000
+
+    asyncio.create_task(
+        remember_generation("planner", session_id, prompt[:500], str(result.output), cfg["model_name"])
+    )
 
     return result.output, _build_meta(cfg, latency_ms, result.usage())
 
@@ -391,10 +430,14 @@ async def run_openscad_meeting(
     provider: str = "pydantic",
     temperature: float = 0.5,
     max_tokens: int = 8192,
+    session_id: str | None = None,
 ) -> tuple[ModelIterationCreate, dict]:
     _require_key(provider)
     cfg = PROVIDER_CONFIG[provider]
     agent = _get_openscad_meeting_agent(provider)
+
+    if session_id is None:
+        session_id = str(uuid.uuid4())
 
     blocks_text = (
         "\n".join(b.model_dump_json() for b in blocks)
@@ -405,7 +448,14 @@ async def run_openscad_meeting(
         f"[{e.start_time:.1f}s] {e.text}" for e in transcript[-20:]
     ) or "(none)"
 
+    # Fetch lessons from MuBit
+    mubit_context = await get_generation_context("openscad-meeting", session_id)
+    lessons_block = ""
+    if mubit_context:
+        lessons_block = f"LESSONS FROM PAST GENERATIONS:\n{mubit_context}\n\n"
+
     prompt = (
+        f"{lessons_block}"
         f"PLAN BLOCKS:\n{blocks_text}\n\n"
         f"RECENT TRANSCRIPT:\n{recent_transcript}\n\n"
         "Generate a complete, compilable OpenSCAD script for this enclosure."
@@ -418,7 +468,17 @@ async def run_openscad_meeting(
     )
     latency_ms = (time.perf_counter() - t0) * 1000
 
-    return result.output, _build_meta(cfg, latency_ms, result.usage())
+    asyncio.create_task(
+        remember_generation(
+            "openscad-meeting", session_id, prompt[:500],
+            result.output.script if hasattr(result.output, "script") else str(result.output),
+            cfg["model_name"],
+        )
+    )
+
+    meta = _build_meta(cfg, latency_ms, result.usage())
+    meta["session_id"] = session_id
+    return result.output, meta
 
 
 async def run_openscad_edit(

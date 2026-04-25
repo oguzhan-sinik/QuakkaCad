@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from agents import run_generate
+from mubit_client import record_generation_outcome, reflect_on_session
 
 router = APIRouter(tags=["generate"])
 
@@ -34,6 +35,13 @@ class GenerateResponse(BaseModel):
     latency_ms: float = Field(..., description="End-to-end LLM call duration in ms.")
     usage: dict = Field(default_factory=dict, description="Token usage stats.")
     tokens_per_second: float | None = Field(default=None, description="Output tokens per second.")
+    session_id: str = Field(..., description="MuBit session ID for outcome tracking.")
+
+
+class OutcomeRequest(BaseModel):
+    session_id: str = Field(..., description="Session ID from the generate response.")
+    success: bool = Field(..., description="Whether OpenSCAD compilation succeeded.")
+    error: str | None = Field(default=None, description="Compilation error message if failed.")
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -57,4 +65,20 @@ async def generate(req: GenerateRequest):
         latency_ms=meta["latency_ms"],
         usage=meta["usage"],
         tokens_per_second=meta["tokens_per_second"],
+        session_id=meta.get("session_id", ""),
     )
+
+
+@router.post("/generate/outcome")
+async def report_outcome(req: OutcomeRequest):
+    """Frontend reports whether OpenSCAD compilation succeeded or failed.
+
+    This closes the feedback loop so MuBit can learn from outcomes.
+    """
+    await record_generation_outcome(
+        session_id=req.session_id,
+        success=req.success,
+        error_msg=req.error,
+    )
+    await reflect_on_session(req.session_id)
+    return {"status": "ok"}

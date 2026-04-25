@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
         { source: "/api/conference", destination: `${API_BASE}/api/conference` },
         { source: "/api/token", destination: `${API_BASE}/api/token` },
         { source: "/ws/:conferenceId", destination: `${API_BASE}/ws/:conferenceId` },
+        { source: "/api/generate/outcome", destination: `${API_BASE}/generate/outcome` },
         { source: "/api/generate", destination: `${API_BASE}/generate` },
         { source: "/api/meetings", destination: `${API_BASE}/api/meetings` },
         { source: "/api/meetings/:path*", destination: `${API_BASE}/api/meetings/:path*` },
