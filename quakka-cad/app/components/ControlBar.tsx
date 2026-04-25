@@ -6,7 +6,7 @@ interface ControlBarProps {
 
 export default function ControlBar({ isMuted, onToggleMute, onLeave }: ControlBarProps) {
   return (
-    <div className="flex gap-3">
+    <div className="h-full flex gap-3">
       <button
         onClick={onToggleMute}
         className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${

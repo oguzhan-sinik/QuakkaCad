@@ -114,8 +114,6 @@ export default function ConferencePage() {
     setTargetedBlockIds(new Set());
     setProcessingUpToEntry(null);
 
-    let blocksCreatedThisRun = 0;
-
     try {
       // Sync any unposted committed lines to the backend transcript
       const currentLines = linesRef.current;
@@ -175,7 +173,6 @@ export default function ConferencePage() {
             setProcessingUpToEntry(prevCount + batchOffsetEnd);
 
           } else if (type === "block_created") {
-            blocksCreatedThisRun++;
             const block = event.block as PlanBlock;
             setPlanBlocks((prev) => [...prev, block]);
             setTargetedBlockIds((prev) => new Set([...prev, block.id]));
@@ -192,9 +189,6 @@ export default function ConferencePage() {
               return prev;
             });
             setPlanUpdatedForCad(true);
-            if (blocksCreatedThisRun > 0) {
-              handleRunOpenSCAD();
-            }
             // Exit immediately — don't wait for the stream to close naturally,
             // since Next.js dev may not propagate the backend's connection close.
             streamEnded = true;

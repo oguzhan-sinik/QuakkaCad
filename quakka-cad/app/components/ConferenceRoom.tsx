@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { Peer } from "../lib/useConference";
 import AttendeeList from "./AttendeeList";
 import ControlBar from "./ControlBar";
@@ -45,37 +46,90 @@ interface ConferenceRoomProps {
   onSelectVersion?: (id: string | null) => void;
 }
 
-export default function ConferenceRoom({
-  conferenceId,
-  peers,
-  myName,
-  isMuted,
-  onToggleMute,
-  onLeave,
-  transcriptLines,
-  transcriptPartials,
-  onDownloadTranscript,
-  onClearTranscript,
-  onSendChat,
-  planBlocks,
-  plannerLoading,
-  targetedBlockIds,
-  processingUpToEntry,
-  onRunPlanner,
-  cadCode,
-  cadLoading,
-  onUpdateCad,
-  modelIterations,
-  viewingVersionId,
-  onSelectVersion,
-}: ConferenceRoomProps) {
-  const shareUrl = typeof window !== "undefined"
-    ? `${window.location.origin}/${conferenceId}`
-    : "";
+export default function ConferenceRoom(props: ConferenceRoomProps) {
+  const {
+    conferenceId,
+    peers,
+    myName,
+    isMuted,
+    onToggleMute,
+    onLeave,
+    transcriptLines,
+    transcriptPartials,
+    onDownloadTranscript,
+    onClearTranscript,
+    onSendChat,
+    planBlocks,
+    plannerLoading,
+    targetedBlockIds,
+    processingUpToEntry,
+    onRunPlanner,
+    cadCode,
+    cadLoading,
+    onUpdateCad,
+    modelIterations,
+    viewingVersionId,
+    onSelectVersion,
+  } = props;
+
+  // ✅ Width state (%)
+  const [leftWidth, setLeftWidth] = useState(20);
+  const [middleWidth, setMiddleWidth] = useState(50);
+  const [rightWidth, setRightWidth] = useState(30);
+
+  const shareUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/${conferenceId}`
+      : "";
 
   function copyLink() {
     navigator.clipboard.writeText(shareUrl);
   }
+
+  // ✅ Resize logic
+  const startResize = (e: React.MouseEvent, divider: "left" | "right") => {
+    e.preventDefault();
+
+    const startX = e.clientX;
+    const startLeft = leftWidth;
+    const startMiddle = middleWidth;
+    const startRight = rightWidth;
+
+    document.body.style.userSelect = "none";
+
+    const onMouseMove = (e: MouseEvent) => {
+      const delta = ((e.clientX - startX) / window.innerWidth) * 100;
+
+      if (divider === "left") {
+        const newLeft = startLeft + delta;
+        const newMiddle = startMiddle - delta;
+
+        if (newLeft > 10 && newMiddle > 20) {
+          setLeftWidth(newLeft);
+          setMiddleWidth(newMiddle);
+        }
+      }
+
+      if (divider === "right") {
+        const newMiddle = startMiddle + delta;
+        const newRight = startRight - delta;
+
+        if (newMiddle > 20 && newRight > 15) {
+          setMiddleWidth(newMiddle);
+          setRightWidth(newRight);
+        }
+      }
+    };
+
+    const onMouseUp = () => {
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
 
   return (
     <div className="flex-1 flex flex-col min-h-0 p-4 gap-4">
@@ -83,7 +137,9 @@ export default function ConferenceRoom({
       <div className="flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold">Quakka CAD</h2>
-          <span className="text-xs text-zinc-500 font-mono">{conferenceId}</span>
+          <span className="text-xs text-zinc-500 font-mono">
+            {conferenceId}
+          </span>
         </div>
         <button
           onClick={copyLink}
@@ -93,42 +149,77 @@ export default function ConferenceRoom({
         </button>
       </div>
 
-      {/* Three-column layout */}
-      <div className="flex-1 flex gap-4 min-h-0">
-        {/* Left column — Plan Sidebar */}
-        <PlanSidebar
-          blocks={planBlocks}
-          isLoading={plannerLoading}
-          targetedBlockIds={targetedBlockIds}
-          onRunPlanner={onRunPlanner}
+      {/* Layout */}
+      <div className="flex-1 flex gap-2 min-h-0">
+        {/* LEFT */}
+        <div
+          style={{ width: `${leftWidth}%` }}
+          className="min-h-0 flex flex-col"
+        >
+          <div className="h-full overflow-auto">
+            <PlanSidebar
+              blocks={planBlocks}
+              isLoading={plannerLoading}
+              targetedBlockIds={targetedBlockIds}
+              onRunPlanner={onRunPlanner}
+            />
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div
+          onMouseDown={(e) => startResize(e, "left")}
+          className="w-1 hover:w-2 transition-all rounded-xl cursor-col-resize bg-zinc-700 hover:bg-zinc-500"
         />
 
-        {/* Middle column — CAD Panel (tabs + prompt) */}
-        <CadPanel
-          cadCode={cadCode}
-          cadLoading={cadLoading}
-          onUpdateCad={onUpdateCad}
-          modelIterations={modelIterations}
-          viewingVersionId={viewingVersionId}
-          onSelectVersion={onSelectVersion}
+        {/* MIDDLE */}
+        <div
+          style={{ width: `${middleWidth}%` }}
+          className="min-h-0 flex flex-col"
+        >
+          <div className="h-full overflow-auto">
+            <CadPanel
+              cadCode={cadCode}
+              cadLoading={cadLoading}
+              onUpdateCad={onUpdateCad}
+              modelIterations={modelIterations}
+              viewingVersionId={viewingVersionId}
+              onSelectVersion={onSelectVersion}
+            />
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div
+          onMouseDown={(e) => startResize(e, "right")}
+          className="w-1 hover:w-2 rounded-xl transition-all cursor-col-resize bg-zinc-700 hover:bg-zinc-500"
         />
 
-        {/* Right column — Transcript + Attendees + Controls */}
-        <div className="flex-1 flex flex-col gap-3 min-h-0">
-          {/* Live Transcript */}
-          <TranscriptPanel
-            lines={transcriptLines}
-            partials={transcriptPartials}
-            onDownload={onDownloadTranscript}
-            onClear={onClearTranscript}
-            onSendChat={onSendChat}
-            processingUpToEntry={processingUpToEntry}
-            isScanning={plannerLoading}
-          />
+        {/* RIGHT */}
+        <div
+          style={{ width: `${rightWidth}%` }}
+          className="min-h-0 flex flex-col gap-3"
+        >
+          {/* Transcript */}
+          <div className="flex-1 min-h-0">
+            <TranscriptPanel
+              lines={transcriptLines}
+              partials={transcriptPartials}
+              onDownload={onDownloadTranscript}
+              onClear={onClearTranscript}
+              onSendChat={onSendChat}
+              processingUpToEntry={processingUpToEntry}
+              isScanning={plannerLoading}
+            />
+          </div>
 
-          {/* Attendee list */}
+          {/* Attendees */}
           <div className="bg-zinc-900 rounded-xl border border-zinc-700/50 p-4 flex-shrink-0">
-            <AttendeeList peers={peers} myName={myName} isMuted={isMuted} />
+            <AttendeeList
+              peers={peers}
+              myName={myName}
+              isMuted={isMuted}
+            />
           </div>
 
           {/* Controls */}

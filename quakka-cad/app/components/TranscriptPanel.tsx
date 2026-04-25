@@ -152,7 +152,7 @@ export default function TranscriptPanel({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-zinc-900 rounded-xl border border-zinc-700/50 min-h-0 overflow-hidden">
+    <div className="h-full flex-1 flex flex-col bg-zinc-900 rounded-xl border border-zinc-700/50 min-h-0 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700/50 flex-shrink-0">
         <div className="flex items-center gap-2">

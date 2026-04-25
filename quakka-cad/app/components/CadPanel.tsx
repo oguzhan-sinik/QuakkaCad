@@ -49,6 +49,7 @@ export default function CadPanel({
     if (cadCode == null) return;
     setCode(cadCode);
     compiledCodeRef.current = "";
+    setTab("preview");
   }, [cadCode]);
 
   // Camera orbit state
@@ -498,7 +499,7 @@ export default function CadPanel({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-zinc-900 rounded-xl border border-zinc-700/50 min-h-0 overflow-hidden">
+    <div className="h-full flex-1 flex flex-col bg-zinc-900 rounded-xl border border-zinc-700/50 min-h-0 overflow-hidden">
       {/* Tabs */}
       <div className="flex items-center border-b border-zinc-700/50 flex-shrink-0">
         <button
