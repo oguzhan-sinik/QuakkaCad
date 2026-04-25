@@ -34,6 +34,120 @@ load_dotenv(Path(__file__).parent / ".env")
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Transcript relevance classification
+# ---------------------------------------------------------------------------
+
+_DESIGN_KEYWORDS: set[str] = {
+    "mm", "cm", "inch", "inches", "meter", "meters",
+    "thick", "thickness", "thin", "wide", "width", "height", "tall",
+    "long", "length", "depth", "diameter", "radius", "size",
+    "enclosure", "bracket", "mount", "mounting", "holder",
+    "hole", "holes", "screw", "screws", "bolt", "nut", "standoff",
+    "wall", "chamfer", "fillet", "rounded", "bevel",
+    "edge", "corner", "slot", "groove", "cutout", "opening", "notch",
+    "lid", "base", "top", "bottom", "side", "panel",
+    "pla", "abs", "petg", "aluminum", "steel", "acrylic", "wood", "nylon",
+    "cylinder", "cube", "sphere", "box", "cone", "torus", "tube",
+    "dimension", "tolerance", "clearance", "offset", "extrude",
+    "3d", "cad", "model", "print", "printer", "printed", "design",
+    "pcb", "board", "battery", "sensor", "led", "wire", "motor",
+    "connector", "usb", "port", "vent", "ventilation", "fan",
+    "snap", "clip", "hinge", "latch", "tab", "rib", "gusset",
+    "openscad", "stl", "mesh", "geometry", "parametric",
+}
+
+_IRRELEVANT_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\b(hi|hello|hey|bye|goodbye|see you|take care)\b",
+        r"\b(lunch|coffee|bathroom|break time|let'?s take a break)\b",
+        r"\b(how are you|how'?s it going|what'?s up|good morning|good afternoon|good evening)\b",
+        r"\b(schedule|calendar|meeting room|zoom|teams)\b",
+        r"\b(weekend|vacation|holiday|birthday|party)\b",
+    ]
+]
+
+
+def classify_relevance_heuristic(text: str) -> bool | None:
+    """Classify transcript line relevance using keyword heuristics.
+
+    Returns True (design-relevant), False (off-topic), or None (ambiguous).
+    """
+    words = set(re.findall(r"[a-z0-9]+", text.lower()))
+    design_overlap = words & _DESIGN_KEYWORDS
+
+    # Strong design signal
+    if len(design_overlap) >= 2:
+        return True
+    # Short utterance with a design word is likely relevant
+    if len(design_overlap) >= 1 and len(words) <= 8:
+        return True
+
+    # Check irrelevant patterns only if no design words at all
+    if not design_overlap:
+        for pattern in _IRRELEVANT_PATTERNS:
+            if pattern.search(text):
+                return False
+
+    return None  # ambiguous — needs LLM
+
+
+RELEVANCE_CLASSIFIER_PROMPT = """\
+You classify transcript lines from a CAD design meeting.
+For each line, decide: is it relevant to the 3D physical design being discussed?
+
+Relevant = dimensions, materials, geometry, components, design decisions, assembly, manufacturing.
+Irrelevant = social chat, scheduling, off-topic, greetings, jokes, food.
+
+Return ONLY a JSON array of booleans, one per input line, same order. Example: [true, false, true]\
+"""
+
+_relevance_agents: dict[str, Any] = {}
+
+
+def _get_relevance_agent(provider: str) -> Agent:
+    if provider not in _relevance_agents:
+        cfg = PROVIDER_CONFIG[provider]
+        _relevance_agents[provider] = Agent(
+            cfg["model"],
+            system_prompt=RELEVANCE_CLASSIFIER_PROMPT,
+            output_type=str,
+            retries=1,
+        )
+    return _relevance_agents[provider]
+
+
+async def classify_relevance_batch(
+    entries: list[TranscriptEntry],
+    provider: str = "groq",
+) -> list[bool]:
+    """Classify a batch of transcript entries using the LLM. Returns list of booleans."""
+    if not entries:
+        return []
+
+    _require_key(provider)
+    agent = _get_relevance_agent(provider)
+
+    numbered = "\n".join(f"{i+1}. {e.text}" for i, e in enumerate(entries))
+    prompt = f"Classify these {len(entries)} lines:\n{numbered}"
+
+    try:
+        result = await asyncio.wait_for(
+            agent.run(prompt, model_settings={"temperature": 0.0, "max_tokens": 256}),
+            timeout=10,
+        )
+        raw = _strip_markdown_fences(_strip_think_blocks(result.output)).strip()
+        parsed = json.loads(raw)
+        if isinstance(parsed, list) and len(parsed) == len(entries):
+            return [bool(x) for x in parsed]
+        logger.warning("Relevance classifier returned wrong length: %d vs %d", len(parsed), len(entries))
+    except Exception as e:
+        logger.warning("Relevance batch classification failed: %s", e)
+
+    # Fallback: assume all relevant (safe default)
+    return [True] * len(entries)
+
+
+# ---------------------------------------------------------------------------
 # System prompts
 # ---------------------------------------------------------------------------
 

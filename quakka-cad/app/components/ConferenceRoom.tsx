@@ -46,6 +46,7 @@ interface ConferenceRoomProps {
   modelIterations?: ModelIteration[];
   viewingVersionId?: string | null;
   onSelectVersion?: (id: string | null) => void;
+  cadTabOverride?: "code" | "preview" | null;
 }
 
 export default function ConferenceRoom(props: ConferenceRoomProps) {
@@ -74,6 +75,7 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
     modelIterations,
     viewingVersionId,
     onSelectVersion,
+    cadTabOverride,
   } = props;
 
   const [leftWidth, setLeftWidth] = useState(20);
@@ -189,6 +191,7 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
               modelIterations={modelIterations}
               viewingVersionId={viewingVersionId}
               onSelectVersion={onSelectVersion}
+              tabOverride={cadTabOverride}
             />
           </div>
         </div>

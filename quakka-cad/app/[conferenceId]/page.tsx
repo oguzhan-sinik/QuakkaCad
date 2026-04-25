@@ -1,12 +1,13 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PlanBlock } from "../components/PlanSidebar";
 import type { ModelIteration } from "../components/CadPanel";
 import { useConference } from "../lib/useConference";
 import { useScribe } from "../lib/useScribe";
 import { useTranscript } from "../components/TranscriptPanel";
+import { useVoiceCommands, type VoiceCommandDef } from "../lib/useVoiceCommands";
 import JoinScreen from "../components/JoinScreen";
 import ConferenceRoom from "../components/ConferenceRoom";
 
@@ -35,6 +36,7 @@ export default function ConferencePage() {
   const [planUpdatedForCad, setPlanUpdatedForCad] = useState(false);
   const [modelIterations, setModelIterations] = useState<ModelIteration[]>([]);
   const [viewingVersionId, setViewingVersionId] = useState<string | null>(null);
+  const [cadTabOverride, setCadTabOverride] = useState<"code" | "preview" | null>(null);
   const modelIterationsRef = useRef<ModelIteration[]>([]);
   modelIterationsRef.current = modelIterations;
   const cadLoadingRef = useRef(false);
@@ -137,10 +139,13 @@ export default function ConferencePage() {
 
     try {
       // Sync any unposted committed lines to the backend transcript
+      // (skip voice command lines — they're actions, not design discussion)
       const currentLines = linesRef.current;
       const t0 = currentLines[0]?.timestamp ?? Date.now();
-      const unposted = currentLines.slice(postedCountRef.current);
-      for (const line of unposted) {
+      const cmdIndices = commandLineIndicesRef.current;
+      for (let i = postedCountRef.current; i < currentLines.length; i++) {
+        if (cmdIndices.has(i)) continue;
+        const line = currentLines[i];
         const start = (line.timestamp - t0) / 1000;
         await fetch(`/api/meetings/${mid}/transcript`, {
           method: "POST",
@@ -244,6 +249,44 @@ export default function ConferencePage() {
       }
     }
   }, []);
+
+  // Voice commands — detect spoken triggers and fire corresponding actions
+  const voiceCommands = useMemo<VoiceCommandDef[]>(() => [
+    {
+      id: "update-cad",
+      triggers: ["update 3d design", "update the design", "generate 3d", "generate the model", "generate model"],
+      cooldownMs: 8000,
+      action: () => handleRunOpenSCAD(),
+    },
+    {
+      id: "refine",
+      triggers: ["refine generation", "refine the model", "refine design", "refine the design"],
+      cooldownMs: 8000,
+      action: () => handleRefine(),
+    },
+    {
+      id: "run-planner",
+      triggers: ["run planner", "run the planner", "update the plan", "analyze transcript"],
+      cooldownMs: 5000,
+      action: () => handleRunPlanner(),
+    },
+    {
+      id: "show-code",
+      triggers: ["show openscad", "show code", "show the code", "show me the code"],
+      cooldownMs: 3000,
+      action: () => setCadTabOverride("code"),
+    },
+    {
+      id: "show-preview",
+      triggers: ["show preview", "show 3d preview", "show the preview", "show model"],
+      cooldownMs: 3000,
+      action: () => setCadTabOverride("preview"),
+    },
+  ], [handleRunOpenSCAD, handleRefine, handleRunPlanner]);
+
+  const { commandLineIndices } = useVoiceCommands(lines, voiceCommands);
+  const commandLineIndicesRef = useRef(commandLineIndices);
+  commandLineIndicesRef.current = commandLineIndices;
 
   useScribe({
     stream: conference.localStream,
@@ -365,6 +408,7 @@ export default function ConferencePage() {
       modelIterations={modelIterations}
       viewingVersionId={viewingVersionId}
       onSelectVersion={handleSelectVersion}
+      cadTabOverride={cadTabOverride}
     />
   );
 }

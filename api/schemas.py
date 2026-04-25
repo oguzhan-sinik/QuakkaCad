@@ -69,6 +69,7 @@ class TranscriptEntry(BaseModel):
     text: str = Field(min_length=1, description="The transcribed speech chunk")
     start_time: float = Field(ge=0.0, description="Seconds from start of audio stream")
     end_time: float = Field(ge=0.0, description="Seconds from start of audio stream")
+    is_design_relevant: Optional[bool] = Field(default=None, description="True if about 3D design, False if off-topic, None if unclassified")
 
 
 class ScriptEdit(BaseModel):

@@ -22,6 +22,7 @@ interface CadPanelProps {
   modelIterations?: ModelIteration[];
   viewingVersionId?: string | null;
   onSelectVersion?: (id: string | null) => void;
+  tabOverride?: "code" | "preview" | null;
 }
 
 export default function CadPanel({
@@ -33,6 +34,7 @@ export default function CadPanel({
   modelIterations,
   viewingVersionId,
   onSelectVersion,
+  tabOverride,
 }: CadPanelProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [code, setCode] = useState("");
@@ -56,6 +58,10 @@ export default function CadPanel({
     compiledCodeRef.current = "";
     setTab("preview");
   }, [cadCode]);
+
+  useEffect(() => {
+    if (tabOverride != null) setTab(tabOverride);
+  }, [tabOverride]);
 
   // Camera orbit state
   // rotY = azimuth (horizontal rotation), rotX = elevation (vertical tilt)
