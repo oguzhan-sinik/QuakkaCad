@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { TranscriptEvent } from "../lib/useConference";
 
 interface TranscriptLine {
@@ -80,14 +80,19 @@ export default function TranscriptPanel({
   lines,
   partials,
   onDownload,
+  onSendChat,
 }: {
   lines: TranscriptLine[];
   partials: Map<string, PartialLine>;
   onDownload: () => void;
+  onSendChat?: (text: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const userScrolledRef = useRef(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatText, setChatText] = useState("");
 
   // Auto-scroll on new lines
   useEffect(() => {
@@ -117,6 +122,23 @@ export default function TranscriptPanel({
   }
 
   const partialEntries = Array.from(partials.values());
+
+  function openChat() {
+    setChatOpen(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  function sendChat() {
+    const text = chatText.trim();
+    if (!text || !onSendChat) return;
+    onSendChat(text);
+    setChatText("");
+  }
+
+  function handleChatKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") sendChat();
+    if (e.key === "Escape") setChatOpen(false);
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-zinc-900 rounded-xl border border-zinc-700/50 min-h-0 overflow-hidden">
@@ -160,16 +182,56 @@ export default function TranscriptPanel({
             <span>{p.text}</span>
           </div>
         ))}
+
+        {/* Jump to latest */}
+        {!autoScroll && (
+          <button
+            onClick={jumpToLatest}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-zinc-700 text-zinc-300 text-xs rounded-full hover:bg-zinc-600 transition-colors"
+          >
+            Jump to latest
+          </button>
+        )}
       </div>
 
-      {/* Jump to latest */}
-      {!autoScroll && (
-        <button
-          onClick={jumpToLatest}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-zinc-700 text-zinc-300 text-xs rounded-full hover:bg-zinc-600 transition-colors"
-        >
-          Jump to latest
-        </button>
+      {/* Chat */}
+      {onSendChat && (
+        <div className="flex-shrink-0 border-t border-zinc-800">
+          {chatOpen ? (
+            <div className="flex items-center gap-2 px-3 py-2">
+              <input
+                ref={inputRef}
+                type="text"
+                value={chatText}
+                onChange={(e) => setChatText(e.target.value)}
+                onKeyDown={handleChatKey}
+                placeholder="Type a message…"
+                className="flex-1 bg-zinc-800 text-sm text-zinc-200 placeholder-zinc-600 px-3 py-1.5 rounded-lg border border-zinc-700 focus:outline-none focus:border-zinc-500 transition-colors"
+              />
+              <button
+                onClick={sendChat}
+                disabled={!chatText.trim()}
+                className="text-xs px-2.5 py-1.5 bg-zinc-700 text-zinc-200 rounded-lg hover:bg-zinc-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Send
+              </button>
+              <button
+                onClick={() => setChatOpen(false)}
+                className="text-zinc-600 hover:text-zinc-400 transition-colors text-sm leading-none px-1"
+                title="Hide chat"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={openChat}
+              className="w-full text-xs text-zinc-700 hover:text-zinc-500 py-1.5 transition-colors"
+            >
+              + Chat
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

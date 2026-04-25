@@ -1,0 +1,6 @@
+[0.0s-4.2s] We need an enclosure for our Arduino Mega and a 3.7V LiPo battery pack.
+[4.5s-9.1s] The board footprint is 102mm by 54mm, that's the standard Mega size.
+[9.3s-13.8s] Let's lock in 5mm wall thickness — thick enough for the connectors.
+[14.0s-18.6s] We should add ventilation holes on the top face for heat dissipation.
+[19.0s-24.3s] We still haven't decided the battery dimensions — do we know the thickness?
+[24.6s-28.0s] No, the battery supplier hasn't confirmed spec yet. That's a blocker.

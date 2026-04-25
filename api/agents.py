@@ -9,8 +9,6 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from schemas import ModelIterationCreate, PlanBlock, PlanBlockCreate, TranscriptEntry
 
@@ -64,35 +62,7 @@ Rules:
 # Provider config
 # ---------------------------------------------------------------------------
 
-_mercury_model = OpenAIChatModel(
-    "mercury-2",
-    provider=OpenAIProvider(
-        base_url="https://api.inceptionlabs.ai/v1",
-        api_key=os.getenv("INCEPTION_API_KEY", ""),
-    ),
-)
-
-_cerebras_model = OpenAIChatModel(
-    "zai-glm-4.7",
-    provider=OpenAIProvider(
-        base_url="https://api.cerebras.ai/v1",
-        api_key=os.getenv("CEREBRAS_API_KEY", ""),
-    ),
-)
-
 PROVIDER_CONFIG: dict[str, dict] = {
-    "mercury": {
-        "model": _mercury_model,
-        "model_name": "mercury-2",
-        "label": "Inception Mercury 2",
-        "key_env": "INCEPTION_API_KEY",
-    },
-    "cerebras": {
-        "model": _cerebras_model,
-        "model_name": "zai-glm-4.7",
-        "label": "Cerebras",
-        "key_env": "CEREBRAS_API_KEY",
-    },
     "pydantic": {
         "model": "gateway/anthropic:claude-opus-4-7",
         "model_name": "gateway/anthropic:claude-opus-4-7",
@@ -212,7 +182,7 @@ def _build_meta(cfg: dict, latency_ms: float, usage: Any) -> dict:
 
 async def run_generate(
     prompt: str,
-    provider: str = "mercury",
+    provider: str = "pydantic",
     temperature: float = 0.75,
     max_tokens: int = 8192,
 ) -> tuple[str, dict]:

@@ -5,6 +5,7 @@ import AttendeeList from "./AttendeeList";
 import ControlBar from "./ControlBar";
 import TranscriptPanel from "./TranscriptPanel";
 import CadPanel from "./CadPanel";
+import PlanSidebar, { type PlanBlock } from "./PlanSidebar";
 
 interface TranscriptLine {
   id: string;
@@ -29,6 +30,10 @@ interface ConferenceRoomProps {
   transcriptLines: TranscriptLine[];
   transcriptPartials: Map<string, PartialLine>;
   onDownloadTranscript: () => void;
+  onSendChat: (text: string) => void;
+  planBlocks: PlanBlock[];
+  plannerLoading: boolean;
+  onRunPlanner: () => void;
 }
 
 export default function ConferenceRoom({
@@ -41,6 +46,10 @@ export default function ConferenceRoom({
   transcriptLines,
   transcriptPartials,
   onDownloadTranscript,
+  onSendChat,
+  planBlocks,
+  plannerLoading,
+  onRunPlanner,
 }: ConferenceRoomProps) {
   const shareUrl = typeof window !== "undefined"
     ? `${window.location.origin}/${conferenceId}`
@@ -68,8 +77,8 @@ export default function ConferenceRoom({
 
       {/* Three-column layout */}
       <div className="flex-1 flex gap-4 min-h-0">
-        {/* Left column — empty for now */}
-        <div className="flex-1 bg-zinc-800/50 rounded-xl border border-zinc-700/50 min-h-0" />
+        {/* Left column — Plan Sidebar */}
+        <PlanSidebar blocks={planBlocks} isLoading={plannerLoading} onRunPlanner={onRunPlanner} />
 
         {/* Middle column — CAD Panel (tabs + prompt) */}
         <CadPanel />
@@ -81,6 +90,7 @@ export default function ConferenceRoom({
             lines={transcriptLines}
             partials={transcriptPartials}
             onDownload={onDownloadTranscript}
+            onSendChat={onSendChat}
           />
 
           {/* Attendee list */}
