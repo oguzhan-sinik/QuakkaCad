@@ -106,6 +106,8 @@ export default function ConferencePage() {
     setTargetedBlockIds(new Set());
     setProcessingUpToEntry(null);
 
+    let blocksCreatedThisRun = 0;
+
     try {
       // Sync any unposted committed lines to the backend transcript
       const currentLines = linesRef.current;
@@ -164,6 +166,7 @@ export default function ConferencePage() {
             setProcessingUpToEntry(plannerBatchStartRef.current + batchOffsetEnd);
 
           } else if (type === "block_created") {
+            blocksCreatedThisRun++;
             const block = event.block as PlanBlock;
             setPlanBlocks((prev) => [...prev, block]);
             setTargetedBlockIds((prev) => new Set([...prev, block.id]));
@@ -180,7 +183,7 @@ export default function ConferencePage() {
               return prev;
             });
             setPlanUpdatedForCad(true);
-            if (!hasRunCadOnce.current) {
+            if (!hasRunCadOnce.current && blocksCreatedThisRun > 0) {
               hasRunCadOnce.current = true;
               handleRunOpenSCAD();
             }
