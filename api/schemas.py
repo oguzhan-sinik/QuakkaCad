@@ -91,6 +91,9 @@ class ModelIteration(BaseModel):
     reasoning: str = Field(description="Agent's justification for geometric decisions in this version")
     applied_lessons: List[str] = Field(default_factory=list, description="MuBit memory utilised")
     delta: Optional[ModelDelta] = Field(default=None, description="What changed from the previous iteration")
+    compile_ok: Optional[bool] = Field(default=None, description="True if the final script compiled without errors")
+    compile_stderr: Optional[str] = Field(default=None, description="Final OpenSCAD stderr after fix attempts")
+    fix_iterations: int = Field(default=0, description="Number of LLM fix passes performed")
 
 
 class Meeting(BaseModel):

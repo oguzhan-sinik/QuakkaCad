@@ -9,7 +9,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agents import run_openscad_edit, run_openscad_meeting, run_planner_chunked
+import logging
+
+from agents import run_openscad_edit, run_openscad_fix, run_openscad_meeting, run_planner_chunked
+from openscad_compiler import compile_openscad
 from schemas import (
     Meeting,
     MeetingCreate,
@@ -25,6 +28,7 @@ from schemas import (
 from storage import store
 
 router = APIRouter(prefix="/api", tags=["meetings"])
+logger = logging.getLogger(__name__)
 
 
 def _get_meeting_or_404(meeting_id: UUID) -> Meeting:
@@ -233,6 +237,10 @@ async def trigger_planner(
             return
 
         store.processed_counts[meeting_id] = len(all_entries)
+        logger.info(
+            "plan generation complete for meeting %s: %d created, %d updated",
+            meeting_id, total_created, total_updated,
+        )
         yield f"data: {json.dumps({'type': 'done', 'total_created': total_created, 'total_updated': total_updated})}\n\n"
 
     return StreamingResponse(
@@ -248,8 +256,9 @@ async def trigger_openscad(
     provider: ProviderEnum = Query(default=ProviderEnum.groq),
     temperature: float = Query(default=0.5, ge=0.0, le=2.0),
     max_tokens: int = Query(default=8192, ge=256, le=16384),
+    max_fix_iterations: int = Query(default=3, ge=0, le=5),
 ):
-    """Run the OpenSCAD Agent and save the resulting model iteration."""
+    """Run the OpenSCAD Agent, compile the result, and iterate fixes until clean."""
     _get_meeting_or_404(meeting_id)
 
     current_models = store.models[meeting_id]
@@ -301,8 +310,58 @@ async def trigger_openscad(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Agent error: {e}")
 
-    iteration = ModelIteration(**iteration_create.model_dump(), delta=delta)
+    # --- Compile + fix loop ---
+    compile_ok: bool | None = None
+    compile_stderr: str | None = None
+    fix_iterations = 0
+    script = iteration_create.script
+
+    if max_fix_iterations > 0:
+        try:
+            ok, stderr = await compile_openscad(script)
+            compile_ok = ok
+            compile_stderr = stderr or None
+
+            for _ in range(max_fix_iterations):
+                if ok:
+                    break
+                errors = [l for l in stderr.splitlines() if l.startswith("ERROR:")]
+                if not errors:
+                    break
+                fixed, _ = await run_openscad_fix(
+                    current_script=script,
+                    stderr=stderr,
+                    provider=provider.value,
+                    max_tokens=max_tokens,
+                )
+                fix_iterations += 1
+                script = fixed
+                ok, stderr = await compile_openscad(script)
+                compile_ok = ok
+                compile_stderr = stderr or None
+
+            iteration_create = ModelIterationCreate(
+                script=script,
+                reasoning=iteration_create.reasoning,
+                applied_lessons=iteration_create.applied_lessons,
+            )
+        except FileNotFoundError as e:
+            logger.warning("OpenSCAD not available — skipping compile loop: %s", e)
+
+    iteration = ModelIteration(
+        **iteration_create.model_dump(),
+        delta=delta,
+        compile_ok=compile_ok,
+        compile_stderr=compile_stderr,
+        fix_iterations=fix_iterations,
+    )
     store.models[meeting_id].append(iteration)
     store.model_block_snapshots[meeting_id] = {b.id for b in current_blocks}
 
+    meta["compile_ok"] = compile_ok
+    meta["fix_iterations"] = fix_iterations
+    logger.info(
+        "model generation complete for meeting %s: %d fix attempt(s), compile_ok=%s",
+        meeting_id, fix_iterations, compile_ok,
+    )
     return OpenSCADResult(iteration=iteration, meta=meta)

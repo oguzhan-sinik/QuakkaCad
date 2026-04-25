@@ -73,6 +73,18 @@ Rules:
 - applied_lessons: list specific CAD heuristics or past compilation errors avoided\
 """
 
+OPENSCAD_FIX_SYSTEM_PROMPT = """\
+You are the MuBit OpenSCAD Fix Agent. Given an OpenSCAD script and its compiler \
+stderr output, return a corrected version of the complete script.
+
+Output ONLY raw OpenSCAD — no markdown fences, no prose, no explanation.
+
+Rules:
+- Fix exactly what the ERROR: lines describe — do not change anything else
+- Preserve all variable names, comments, and structure outside the error sites
+- If an error is ambiguous, choose the minimal fix that makes the script valid\
+"""
+
 # ---------------------------------------------------------------------------
 # Provider config
 # ---------------------------------------------------------------------------
@@ -115,6 +127,7 @@ _generate_agents: dict[str, Any] = {}
 _planner_agents: dict[str, Any] = {}
 _openscad_meeting_agents: dict[str, Any] = {}
 _openscad_edit_agents: dict[str, Any] = {}
+_openscad_fix_agents: dict[str, Any] = {}
 
 
 def _require_key(provider: str) -> None:
@@ -169,6 +182,18 @@ def _get_openscad_edit_agent(provider: str) -> Agent:
             retries=3,
         )
     return _openscad_edit_agents[provider]
+
+
+def _get_openscad_fix_agent(provider: str) -> Agent:
+    if provider not in _openscad_fix_agents:
+        cfg = PROVIDER_CONFIG[provider]
+        _openscad_fix_agents[provider] = Agent(
+            cfg["model"],
+            system_prompt=OPENSCAD_FIX_SYSTEM_PROMPT,
+            output_type=str,
+            retries=3,
+        )
+    return _openscad_fix_agents[provider]
 
 
 # ---------------------------------------------------------------------------
@@ -502,3 +527,34 @@ async def run_openscad_edit(
     meta["reasoning"] = output.reasoning
     meta["applied_lessons"] = output.applied_lessons
     return patched, output.edits, meta
+
+
+async def run_openscad_fix(
+    current_script: str,
+    stderr: str,
+    provider: str = "groq",
+    max_tokens: int = 8192,
+) -> tuple[str, dict]:
+    """Ask the LLM to fix a script given OpenSCAD compiler stderr output.
+
+    Returns (fixed_script, meta).
+    """
+    _require_key(provider)
+    cfg = PROVIDER_CONFIG[provider]
+    agent = _get_openscad_fix_agent(provider)
+
+    prompt = (
+        f"CURRENT SCRIPT:\n{current_script}\n\n"
+        f"COMPILER STDERR:\n{stderr}\n\n"
+        "Return the complete corrected OpenSCAD script."
+    )
+
+    t0 = time.perf_counter()
+    result = await asyncio.wait_for(
+        agent.run(prompt, model_settings=_model_settings(provider, 0.2, max_tokens)),
+        timeout=120,
+    )
+    latency_ms = (time.perf_counter() - t0) * 1000
+
+    fixed = _strip_markdown_fences(result.output).strip()
+    return fixed, _build_meta(cfg, latency_ms, result.usage())
