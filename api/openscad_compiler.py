@@ -23,7 +23,7 @@ async def compile_openscad(script: str, timeout: float = 30.0) -> tuple[bool, st
     try:
         proc = await asyncio.create_subprocess_exec(
             "openscad",
-            "--export-format", "off",
+            "--export-format", "csg",
             "-o", "/dev/null",
             str(tmp_path),
             stdout=asyncio.subprocess.DEVNULL,

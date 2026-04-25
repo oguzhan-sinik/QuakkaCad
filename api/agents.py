@@ -1,20 +1,34 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Literal, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, PromptedOutput
 
 from mubit_client import get_generation_context, remember_generation
-from schemas import ModelIterationCreate, PlanBlock, PlanBlockCreate, ScriptEdit, TranscriptEntry
+from schemas import (
+    AnyBlockContent,
+    DecisionContent,
+    MissingInfoContent,
+    ModelIterationCreate,
+    ObjectiveContent,
+    PlanBlock,
+    PlanBlockCreate,
+    ScriptEdit,
+    TranscriptEntry,
+    VariableContent,
+)
 
 load_dotenv(Path(__file__).parent / ".env")
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # System prompts
@@ -26,9 +40,19 @@ PLANNER_SYSTEM_PROMPT = """\
 You are the MuBit Planner Agent. Parse hackathon meeting transcripts and extract \
 structured plan blocks for a CAD design project.
 
-Given the current transcript and existing blocks, return:
-- blocks_to_create: new blocks for information not yet captured
-- blocks_to_update: modified existing blocks (must include the correct UUID)
+Output a JSON object with exactly two top-level keys:
+  "blocks_to_create": array of block objects (omit "id")
+  "blocks_to_update": array of block objects (must include "id" UUID of the existing block)
+
+Each block object must have:
+  "block_type": one of "objective", "variable", "decision", "missing_info"
+  "reasoning": string ≥ 10 chars citing specific transcript evidence
+
+Type-specific fields (include only the relevant ones):
+  objective:    "goal_statement" (string), "success_criteria" (array of strings)
+  variable:     "parameter_name" (string), "value" (number), "unit" (string), "is_locked" (bool)
+  decision:     "final_choice" (string), "rejected_alternatives" (array of strings)
+  missing_info: "blocking_parameter" (string), "impact" (string)
 
 Block types and when to use them:
   objective    - physical build goal; populate success_criteria as a strict list
@@ -38,10 +62,8 @@ Block types and when to use them:
   missing_info - a required parameter not yet agreed upon; explain the downstream impact
 
 Rules:
-- Increment version when updating an existing block
 - reasoning must be ≥ 10 chars and cite specific transcript evidence
-- Never fabricate values; if a number is uncertain, use missing_info instead
-- applied_lessons: cite any past mistakes or heuristics you're applying\
+- Never fabricate values; if a number is uncertain, use missing_info instead\
 """
 
 OPENSCAD_EDIT_SYSTEM_PROMPT = """\
@@ -117,6 +139,31 @@ class OpenSCADEditOutput(BaseModel):
     applied_lessons: list[str] = Field(default_factory=list)
 
 
+# LLM-facing flat schemas for the planner (no discriminated union)
+class LLMBlockCreate(BaseModel):
+    block_type: Literal["objective", "variable", "decision", "missing_info"]
+    reasoning: str
+    goal_statement: Optional[str] = None
+    success_criteria: Optional[list[str]] = None
+    parameter_name: Optional[str] = None
+    value: Optional[float] = None
+    unit: Optional[str] = None
+    is_locked: Optional[bool] = None
+    final_choice: Optional[str] = None
+    rejected_alternatives: Optional[list[str]] = None
+    blocking_parameter: Optional[str] = None
+    impact: Optional[str] = None
+
+
+class LLMBlockUpdate(LLMBlockCreate):
+    id: uuid.UUID
+
+
+class LLMPlannerOutput(BaseModel):
+    blocks_to_create: list[LLMBlockCreate] = Field(default_factory=list)
+    blocks_to_update: list[LLMBlockUpdate] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Lazy agent registries
 # ---------------------------------------------------------------------------
@@ -143,7 +190,7 @@ def _get_generate_agent(provider: str) -> Agent:
             cfg["model"],
             system_prompt=GENERATE_SYSTEM_PROMPT,
             output_type=str,
-            retries=3,
+            retries=1,
         )
     return _generate_agents[provider]
 
@@ -154,8 +201,8 @@ def _get_planner_agent(provider: str) -> Agent:
         _planner_agents[provider] = Agent(
             cfg["model"],
             system_prompt=PLANNER_SYSTEM_PROMPT,
-            output_type=PlannerOutput,
-            retries=3,
+            output_type=PromptedOutput(LLMPlannerOutput),
+            retries=1,
         )
     return _planner_agents[provider]
 
@@ -167,7 +214,7 @@ def _get_openscad_meeting_agent(provider: str) -> Agent:
             cfg["model"],
             system_prompt=OPENSCAD_MEETING_SYSTEM_PROMPT,
             output_type=ModelIterationCreate,
-            retries=3,
+            retries=1,
         )
     return _openscad_meeting_agents[provider]
 
@@ -179,7 +226,7 @@ def _get_openscad_edit_agent(provider: str) -> Agent:
             cfg["model"],
             system_prompt=OPENSCAD_EDIT_SYSTEM_PROMPT,
             output_type=OpenSCADEditOutput,
-            retries=3,
+            retries=1,
         )
     return _openscad_edit_agents[provider]
 
@@ -191,7 +238,7 @@ def _get_openscad_fix_agent(provider: str) -> Agent:
             cfg["model"],
             system_prompt=OPENSCAD_FIX_SYSTEM_PROMPT,
             output_type=str,
-            retries=3,
+            retries=1,
         )
     return _openscad_fix_agents[provider]
 
@@ -199,6 +246,51 @@ def _get_openscad_fix_agent(provider: str) -> Agent:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _llm_block_to_content(b: LLMBlockCreate) -> AnyBlockContent:
+    if b.block_type == "objective":
+        return ObjectiveContent(
+            goal_statement=b.goal_statement or "TBD",
+            success_criteria=b.success_criteria or [],
+        )
+    if b.block_type == "variable":
+        return VariableContent(
+            parameter_name=b.parameter_name or "unknown",
+            value=b.value or 0.0,
+            unit=b.unit or "",
+            is_locked=b.is_locked or False,
+        )
+    if b.block_type == "decision":
+        return DecisionContent(
+            final_choice=b.final_choice or "TBD",
+            rejected_alternatives=b.rejected_alternatives or [],
+        )
+    return MissingInfoContent(
+        blocking_parameter=b.blocking_parameter or "unknown",
+        impact=b.impact or "unknown",
+    )
+
+
+def _llm_output_to_planner_output(
+    llm: LLMPlannerOutput,
+    running_blocks: list[PlanBlock],
+) -> PlannerOutput:
+    block_versions = {b.id: b.version for b in running_blocks}
+    creates = [
+        PlanBlockCreate(content=_llm_block_to_content(b), reasoning=b.reasoning)
+        for b in llm.blocks_to_create
+    ]
+    updates = []
+    for b in llm.blocks_to_update:
+        prev_version = block_versions.get(b.id, 1)
+        updates.append(PlanBlock(
+            id=b.id,
+            content=_llm_block_to_content(b),
+            reasoning=b.reasoning,
+            version=prev_version + 1,
+        ))
+    return PlannerOutput(blocks_to_create=creates, blocks_to_update=updates)
 
 
 def _strip_markdown_fences(text: str) -> str:
@@ -324,11 +416,13 @@ async def run_planner(
     )
     latency_ms = (time.perf_counter() - t0) * 1000
 
+    output = _llm_output_to_planner_output(result.output, existing_blocks)
+
     asyncio.create_task(
         remember_generation("planner", session_id, prompt[:500], str(result.output), cfg["model_name"])
     )
 
-    return result.output, _build_meta(cfg, latency_ms, result.usage())
+    return output, _build_meta(cfg, latency_ms, result.usage())
 
 
 def _expand_multiline_entries(
@@ -412,13 +506,16 @@ async def run_planner_chunked(
                 agent.run(prompt, model_settings=settings),
                 timeout=90,
             )
-            output: PlannerOutput = result.output
         except asyncio.TimeoutError:
+            logger.warning("planner chunk %d timed out for provider=%s", chunk_index, provider)
             yield ("error", {"detail": f"Chunk {chunk_index} timed out after 90s"})
             return
         except Exception as e:
+            logger.warning("planner chunk %d agent error for provider=%s: %s", chunk_index, provider, e, exc_info=True)
             yield ("error", {"detail": f"Chunk {chunk_index} agent error: {e}"})
             return
+
+        output = _llm_output_to_planner_output(result.output, running_blocks)
 
         # Accumulate into running_blocks so later chunks see blocks from earlier ones
         for b in output.blocks_to_create:

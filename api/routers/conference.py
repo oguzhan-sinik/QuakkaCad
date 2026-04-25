@@ -57,7 +57,13 @@ async def get_elevenlabs_token():
             status_code=502,
         )
 
-    return {"token": res.json()["token"]}
+    try:
+        return {"token": res.json()["token"]}
+    except Exception:
+        return JSONResponse(
+            {"error": f"Unexpected ElevenLabs response: {res.text[:200]}"},
+            status_code=502,
+        )
 
 
 # ---------------------------------------------------------------------------

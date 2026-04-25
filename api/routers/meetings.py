@@ -229,10 +229,12 @@ async def trigger_planner(
                     yield f"data: {json.dumps({'type': 'chunk_complete', **payload})}\n\n"
 
                 elif etype == "error":
+                    logger.warning("planner error for meeting %s: %s", meeting_id, payload.get("detail"))
                     yield f"data: {json.dumps({'type': 'error', **payload})}\n\n"
                     return
 
         except Exception as e:
+            logger.warning("planner unhandled error for meeting %s: %s", meeting_id, e, exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
             return
 
@@ -277,7 +279,7 @@ async def trigger_openscad(
             )
             delta = ModelDelta(changed_block_ids=[], edits=[], is_full_regen=True)
         else:
-            # Incremental edit — only pass blocks that changed since last model run
+            # Determine which blocks changed since last model run
             prev_block_ids: set[UUID] = store.model_block_snapshots.get(meeting_id, set())
             changed_blocks = [
                 b for b in current_blocks
@@ -286,22 +288,42 @@ async def trigger_openscad(
             if not changed_blocks:
                 changed_blocks = list(current_blocks)
 
-            patched_script, edits, meta = await run_openscad_edit(
-                current_script=latest_model.script,
-                changed_blocks=changed_blocks,
-                provider=provider.value,
-                max_tokens=max_tokens,
-            )
-            iteration_create = ModelIterationCreate(
-                script=patched_script,
-                reasoning=meta.get("reasoning", "incremental edit"),
-                applied_lessons=[],
-            )
-            delta = ModelDelta(
-                changed_block_ids=[b.id for b in changed_blocks],
-                edits=edits,
-                is_full_regen=False,
-            )
+            # Structural changes (objective/decision) require full regen — search-and-replace
+            # cannot express new geometry insertions. Parametric changes (variable/missing_info)
+            # are safe to patch in-place.
+            _STRUCTURAL = {"objective", "decision"}
+            is_structural = any(b.content.block_type in _STRUCTURAL for b in changed_blocks)
+
+            if is_structural:
+                iteration_create, meta = await run_openscad_meeting(
+                    transcript=store.transcripts[meeting_id],
+                    blocks=current_blocks,
+                    provider=provider.value,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                delta = ModelDelta(
+                    changed_block_ids=[b.id for b in changed_blocks],
+                    edits=[],
+                    is_full_regen=True,
+                )
+            else:
+                patched_script, edits, meta = await run_openscad_edit(
+                    current_script=latest_model.script,
+                    changed_blocks=changed_blocks,
+                    provider=provider.value,
+                    max_tokens=max_tokens,
+                )
+                iteration_create = ModelIterationCreate(
+                    script=patched_script,
+                    reasoning=meta.get("reasoning", "incremental edit"),
+                    applied_lessons=[],
+                )
+                delta = ModelDelta(
+                    changed_block_ids=[b.id for b in changed_blocks],
+                    edits=edits,
+                    is_full_regen=False,
+                )
 
     except asyncio.CancelledError:
         raise

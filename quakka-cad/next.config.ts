@@ -9,7 +9,6 @@ const nextConfig: NextConfig = {
     return {
       afterFiles: [
         { source: "/api/conference", destination: `${API_BASE}/api/conference` },
-        { source: "/api/token", destination: `${API_BASE}/api/token` },
         { source: "/ws/:conferenceId", destination: `${API_BASE}/ws/:conferenceId` },
         { source: "/api/generate/outcome", destination: `${API_BASE}/generate/outcome` },
         { source: "/api/generate", destination: `${API_BASE}/generate` },
