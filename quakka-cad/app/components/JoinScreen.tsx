@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface JoinScreenProps {
   conferenceId: string;
@@ -10,6 +10,17 @@ interface JoinScreenProps {
 
 export default function JoinScreen({ conferenceId, onJoin, error }: JoinScreenProps) {
   const [name, setName] = useState("");
+
+  // When the browser restores this page from bfcache (back/forward navigation),
+  // the DOM reflects the old filled-in name but React reinitialises to "".
+  // Resetting on pageshow:persisted keeps them in sync.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setName("");
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,6 +60,7 @@ export default function JoinScreen({ conferenceId, onJoin, error }: JoinScreenPr
           <button
             type="submit"
             disabled={!name.trim()}
+            suppressHydrationWarning
             className="w-full py-2.5 bg-white text-black font-semibold rounded-lg hover:bg-white/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Join
