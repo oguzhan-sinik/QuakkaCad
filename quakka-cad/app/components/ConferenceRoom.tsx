@@ -41,6 +41,8 @@ interface ConferenceRoomProps {
   cadCode?: string | null;
   cadLoading?: boolean;
   onUpdateCad?: () => void;
+  onRefine?: () => void;
+  refineLoading?: boolean;
   modelIterations?: ModelIteration[];
   viewingVersionId?: string | null;
   onSelectVersion?: (id: string | null) => void;
@@ -67,12 +69,13 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
     cadCode,
     cadLoading,
     onUpdateCad,
+    onRefine,
+    refineLoading,
     modelIterations,
     viewingVersionId,
     onSelectVersion,
   } = props;
 
-  // ✅ Width state (%)
   const [leftWidth, setLeftWidth] = useState(20);
   const [middleWidth, setMiddleWidth] = useState(50);
   const [rightWidth, setRightWidth] = useState(30);
@@ -86,7 +89,6 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
     navigator.clipboard.writeText(shareUrl);
   }
 
-  // ✅ Resize logic
   const startResize = (e: React.MouseEvent, divider: "left" | "right") => {
     e.preventDefault();
 
@@ -182,6 +184,8 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
               cadCode={cadCode}
               cadLoading={cadLoading}
               onUpdateCad={onUpdateCad}
+              onRefine={onRefine}
+              refineLoading={refineLoading}
               modelIterations={modelIterations}
               viewingVersionId={viewingVersionId}
               onSelectVersion={onSelectVersion}

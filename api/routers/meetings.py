@@ -11,7 +11,8 @@ from pydantic import BaseModel
 
 import logging
 
-from agents import run_openscad_edit, run_openscad_fix, run_openscad_meeting, run_planner_chunked
+from agents import run_openscad_edit, run_openscad_fix, run_openscad_meeting, run_openscad_refine, run_planner_chunked
+from mubit_client import record_generation_outcome, reflect_on_session
 from openscad_compiler import compile_openscad
 from schemas import (
     Meeting,
@@ -382,8 +383,104 @@ async def trigger_openscad(
 
     meta["compile_ok"] = compile_ok
     meta["fix_iterations"] = fix_iterations
+
+    session_id = meta.get("session_id")
+    if session_id:
+        asyncio.create_task(record_generation_outcome(
+            session_id=session_id,
+            success=bool(compile_ok),
+            error_msg=compile_stderr,
+        ))
+        asyncio.create_task(reflect_on_session(session_id))
+
     logger.info(
         "model generation complete for meeting %s: %d fix attempt(s), compile_ok=%s",
+        meeting_id, fix_iterations, compile_ok,
+    )
+    return OpenSCADResult(iteration=iteration, meta=meta)
+
+
+@router.post("/meetings/{meeting_id}/agent/refine", response_model=OpenSCADResult, tags=["agents"])
+async def trigger_refine(
+    meeting_id: UUID,
+    max_fix_iterations: int = Query(default=3, ge=0, le=5),
+):
+    """Run Claude Opus 4.7 with adaptive extended thinking to produce a quality OpenSCAD model."""
+    _get_meeting_or_404(meeting_id)
+
+    current_models = store.models[meeting_id]
+    current_blocks = store.blocks[meeting_id]
+    latest_model = current_models[-1] if current_models else None
+
+    try:
+        iteration_create, meta = await run_openscad_refine(
+            blocks=current_blocks,
+            current_script=latest_model.script if latest_model else None,
+            previous_compile_ok=latest_model.compile_ok if latest_model else None,
+            previous_compile_stderr=latest_model.compile_stderr if latest_model else None,
+        )
+    except asyncio.CancelledError:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Refine agent error: {e}")
+
+    compile_ok: bool | None = None
+    compile_stderr: str | None = None
+    fix_iterations = 0
+    script = iteration_create.script
+
+    if max_fix_iterations > 0:
+        try:
+            ok, stderr = await compile_openscad(script)
+            compile_ok = ok
+            compile_stderr = stderr or None
+            for _ in range(max_fix_iterations):
+                if ok:
+                    break
+                errors = [l for l in stderr.splitlines() if l.startswith("ERROR:")]
+                if not errors:
+                    break
+                fixed, _ = await run_openscad_fix(current_script=script, stderr=stderr)
+                fix_iterations += 1
+                script = fixed
+                ok, stderr = await compile_openscad(script)
+                compile_ok = ok
+                compile_stderr = stderr or None
+            iteration_create = ModelIterationCreate(
+                script=script,
+                reasoning=iteration_create.reasoning,
+                applied_lessons=iteration_create.applied_lessons,
+            )
+        except FileNotFoundError as e:
+            logger.warning("OpenSCAD not available — skipping compile loop: %s", e)
+
+    delta = ModelDelta(changed_block_ids=[], edits=[], is_full_regen=True)
+    iteration = ModelIteration(
+        **iteration_create.model_dump(),
+        delta=delta,
+        compile_ok=compile_ok,
+        compile_stderr=compile_stderr,
+        fix_iterations=fix_iterations,
+    )
+    store.models[meeting_id].append(iteration)
+    store.model_block_snapshots[meeting_id] = {b.id for b in current_blocks}
+
+    meta["compile_ok"] = compile_ok
+    meta["fix_iterations"] = fix_iterations
+
+    session_id = meta.get("session_id")
+    if session_id:
+        asyncio.create_task(record_generation_outcome(
+            session_id=session_id,
+            success=bool(compile_ok),
+            error_msg=compile_stderr,
+        ))
+        asyncio.create_task(reflect_on_session(session_id))
+
+    logger.info(
+        "refine complete for meeting %s: %d fix attempt(s), compile_ok=%s",
         meeting_id, fix_iterations, compile_ok,
     )
     return OpenSCADResult(iteration=iteration, meta=meta)

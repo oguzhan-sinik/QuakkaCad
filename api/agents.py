@@ -12,9 +12,10 @@ from typing import Any, AsyncGenerator, Literal, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError
-from pydantic_ai import Agent
+from pydantic_ai import Agent, NativeOutput
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 
-from mubit_client import get_generation_context, remember_generation
+from mubit_client import get_generation_context, record_generation_outcome, reflect_on_session, remember_generation
 from schemas import (
     AnyBlockContent,
     DecisionContent,
@@ -109,6 +110,38 @@ Rules:
 - If an error is ambiguous, choose the minimal fix that makes the script valid\
 """
 
+OPENSCAD_REFINE_SYSTEM_PROMPT = """\
+You are a senior OpenSCAD engineer with deep knowledge of parametric 3D design.
+You are given design plan blocks and optionally a previous draft script.
+
+Your task: produce a high-quality, fully compilable, clean parametric OpenSCAD model.
+
+Rules:
+- Ignore plan blocks unrelated to physical geometry (workflow notes, team decisions about
+  non-geometric matters, abstract project goals)
+- Focus on: objective blocks (form factor), variable blocks (dimensions), decision blocks
+  (geometry choices such as mounting holes, chamfers, wall thickness)
+- Declare ALL numeric parameters as named variables at the top of the file
+- Use union(), difference(), intersection() correctly — no syntax errors
+- Add // TODO comments for any missing_info blocks (substitute sensible defaults)
+- reasoning must explain every significant geometric decision made
+- applied_lessons: note any CAD heuristics applied (e.g. tolerances, printability)\
+"""
+
+_OPENSCAD_NOISE = re.compile(
+    r"^(Could not initialize|WARNING: could not initialize|Application path is|"
+    r"Converted \d+ warning|QtCore|QStandardPaths|QFactoryLoader|ALSA)",
+    re.IGNORECASE,
+)
+
+
+def _filter_openscad_stderr(stderr: str | None) -> str | None:
+    if not stderr:
+        return stderr
+    lines = [l for l in stderr.splitlines() if not _OPENSCAD_NOISE.match(l)]
+    return "\n".join(lines).strip() or None
+
+
 # ---------------------------------------------------------------------------
 # Provider config
 # ---------------------------------------------------------------------------
@@ -118,6 +151,12 @@ PROVIDER_CONFIG: dict[str, dict] = {
         "model": "gateway/groq:openai/gpt-oss-120b",
         "model_name": "openai/gpt-oss-120b",
         "label": "Pydantic Gateway / Groq (GPT OSS 120B)",
+        "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
+    },
+    "anthropic": {
+        "model": "gateway/anthropic:claude-opus-4-7",
+        "model_name": "claude-opus-4-7",
+        "label": "Pydantic Gateway / Anthropic (Claude Opus 4.7)",
         "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
     },
 }
@@ -177,6 +216,7 @@ _planner_agents: dict[str, Any] = {}
 _openscad_meeting_agents: dict[str, Any] = {}
 _openscad_edit_agents: dict[str, Any] = {}
 _openscad_fix_agents: dict[str, Any] = {}
+_refine_agents: dict[str, Any] = {}
 
 
 def _require_key(provider: str) -> None:
@@ -243,6 +283,18 @@ def _get_openscad_fix_agent(provider: str) -> Agent:
             retries=1,
         )
     return _openscad_fix_agents[provider]
+
+
+def _get_refine_agent(provider: str) -> Agent:
+    if provider not in _refine_agents:
+        cfg = PROVIDER_CONFIG[provider]
+        _refine_agents[provider] = Agent(
+            cfg["model"],
+            system_prompt=OPENSCAD_REFINE_SYSTEM_PROMPT,
+            output_type=NativeOutput(ModelIterationCreate),
+            retries=1,
+        )
+    return _refine_agents[provider]
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +530,7 @@ async def run_planner_chunked(
             ("chunk_complete", dict), ("error", dict)
     """
     _require_key(provider)
+    cfg = PROVIDER_CONFIG[provider]
     agent = _get_planner_agent(provider)
     settings = _model_settings(provider, temperature, max_tokens)
 
@@ -545,6 +598,9 @@ async def run_planner_chunked(
                     running_blocks[i] = b
                     break
 
+        asyncio.create_task(
+            remember_generation("planner", str(uuid.uuid4()), prompt[:500], raw[:500], cfg["model_name"])
+        )
         yield ("chunk_result", output)
         yield ("chunk_complete", {"chunk_index": chunk_index})
 
@@ -674,3 +730,76 @@ async def run_openscad_fix(
 
     fixed = _strip_markdown_fences(result.output).strip()
     return fixed, _build_meta(cfg, latency_ms, result.usage())
+
+
+async def run_openscad_refine(
+    blocks: list[PlanBlock],
+    current_script: str | None,
+    provider: str = "anthropic",
+    max_tokens: int = 16384,
+    session_id: str | None = None,
+    previous_compile_ok: bool | None = None,
+    previous_compile_stderr: str | None = None,
+) -> tuple[ModelIterationCreate, dict]:
+    """Use Claude Opus with adaptive extended thinking to produce a high-quality OpenSCAD model.
+
+    Returns (iteration_create, meta).
+    """
+    _require_key(provider)
+    cfg = PROVIDER_CONFIG[provider]
+    agent = _get_refine_agent(provider)
+
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+
+    blocks_text = (
+        "\n".join(b.model_dump_json() for b in blocks) if blocks else "(no blocks)"
+    )
+    script_section = (
+        f"CURRENT DRAFT (use as reference, improve freely):\n{current_script}"
+        if current_script
+        else "(no previous script — generate from scratch)"
+    )
+    if previous_compile_ok is False:
+        filtered_err = _filter_openscad_stderr(previous_compile_stderr)
+        compile_section = (
+            "PREVIOUS COMPILE RESULT: FAILED\n"
+            f"Errors to fix:\n{filtered_err or '(no ERROR: lines — may be a geometry/render issue)'}\n\n"
+        )
+    elif previous_compile_ok is True:
+        compile_section = "PREVIOUS COMPILE RESULT: OK (improve quality, don't break what works)\n\n"
+    else:
+        compile_section = ""
+
+    prompt = (
+        f"PLAN BLOCKS:\n{blocks_text}\n\n"
+        f"{script_section}\n\n"
+        f"{compile_section}"
+        "Produce a complete, high-quality OpenSCAD model."
+    )
+
+    mubit_context = await get_generation_context("openscad-refine", session_id)
+    if mubit_context:
+        prompt = f"LESSONS FROM PAST REFINEMENTS:\n{mubit_context}\n\n" + prompt
+
+    # Opus 4.7: adaptive thinking + xhigh effort; temperature disallowed
+    model_settings = AnthropicModelSettings(
+        max_tokens=max_tokens,
+        anthropic_thinking={"type": "adaptive"},
+        anthropic_effort="low",
+    )
+
+    t0 = time.perf_counter()
+    result = await asyncio.wait_for(
+        agent.run(prompt, model_settings=model_settings),
+        timeout=300,
+    )
+    latency_ms = (time.perf_counter() - t0) * 1000
+
+    asyncio.create_task(
+        remember_generation("openscad-refine", session_id, prompt[:500], result.output.script, cfg["model_name"])
+    )
+
+    meta = _build_meta(cfg, latency_ms, result.usage())
+    meta["session_id"] = session_id
+    return result.output, meta

@@ -31,6 +31,7 @@ export default function ConferencePage() {
   const [transcriptUpdated, setTranscriptUpdated] = useState(false);
   const [cadCode, setCadCode] = useState<string | null>(null);
   const [cadLoading, setCadLoading] = useState(false);
+  const [refineLoading, setRefineLoading] = useState(false);
   const [planUpdatedForCad, setPlanUpdatedForCad] = useState(false);
   const [modelIterations, setModelIterations] = useState<ModelIteration[]>([]);
   const [viewingVersionId, setViewingVersionId] = useState<string | null>(null);
@@ -38,6 +39,8 @@ export default function ConferencePage() {
   modelIterationsRef.current = modelIterations;
   const cadLoadingRef = useRef(false);
   cadLoadingRef.current = cadLoading;
+  const refineLoadingRef = useRef(false);
+  refineLoadingRef.current = refineLoading;
 
   const postedCountRef = useRef(0);
   const linesRef = useRef(lines);
@@ -101,6 +104,24 @@ export default function ConferencePage() {
       console.error("OpenSCAD agent error:", e);
     } finally {
       setCadLoading(false);
+    }
+  }, []);
+
+  const handleRefine = useCallback(async () => {
+    const mid = meetingIdRef.current;
+    if (!mid || refineLoadingRef.current) return;
+    setRefineLoading(true);
+    try {
+      const res = await fetch(`/api/meetings/${mid}/agent/refine`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      setCadCode(result.iteration.script);
+      setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
+      setViewingVersionId(null);
+    } catch (e) {
+      console.error("Refine error:", e);
+    } finally {
+      setRefineLoading(false);
     }
   }, []);
 
@@ -339,6 +360,8 @@ export default function ConferencePage() {
       cadCode={cadCode}
       cadLoading={cadLoading}
       onUpdateCad={planUpdatedForCad && viewingVersionId === null ? handleRunOpenSCAD : undefined}
+      onRefine={meetingId ? handleRefine : undefined}
+      refineLoading={refineLoading}
       modelIterations={modelIterations}
       viewingVersionId={viewingVersionId}
       onSelectVersion={handleSelectVersion}
