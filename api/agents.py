@@ -10,7 +10,6 @@ from typing import Any, AsyncGenerator
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 from mubit_client import get_generation_context, remember_generation
 from schemas import ModelIterationCreate, PlanBlock, PlanBlockCreate, ScriptEdit, TranscriptEntry
@@ -79,16 +78,10 @@ Rules:
 # ---------------------------------------------------------------------------
 
 PROVIDER_CONFIG: dict[str, dict] = {
-    "pydantic": {
-        "model": "gateway/anthropic:claude-opus-4-7",
-        "model_name": "gateway/anthropic:claude-opus-4-7",
-        "label": "Pydantic Gateway (Claude Opus 4.7)",
-        "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
-    },
-    "pydantic-fast": {
-        "model": "gateway/anthropic:claude-sonnet-4-6",
-        "model_name": "gateway/anthropic:claude-sonnet-4-6",
-        "label": "Pydantic Gateway (Claude Sonnet 4.6)",
+    "groq": {
+        "model": "gateway/groq:llama-3.3-70b-versatile",
+        "model_name": "llama-3.3-70b-versatile",
+        "label": "Pydantic Gateway / Groq (Llama 3.3 70B Versatile)",
         "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
     },
 }
@@ -137,6 +130,7 @@ def _get_generate_agent(provider: str) -> Agent:
             cfg["model"],
             system_prompt=GENERATE_SYSTEM_PROMPT,
             output_type=str,
+            retries=3,
         )
     return _generate_agents[provider]
 
@@ -148,6 +142,7 @@ def _get_planner_agent(provider: str) -> Agent:
             cfg["model"],
             system_prompt=PLANNER_SYSTEM_PROMPT,
             output_type=PlannerOutput,
+            retries=3,
         )
     return _planner_agents[provider]
 
@@ -159,6 +154,7 @@ def _get_openscad_meeting_agent(provider: str) -> Agent:
             cfg["model"],
             system_prompt=OPENSCAD_MEETING_SYSTEM_PROMPT,
             output_type=ModelIterationCreate,
+            retries=3,
         )
     return _openscad_meeting_agents[provider]
 
@@ -170,6 +166,7 @@ def _get_openscad_edit_agent(provider: str) -> Agent:
             cfg["model"],
             system_prompt=OPENSCAD_EDIT_SYSTEM_PROMPT,
             output_type=OpenSCADEditOutput,
+            retries=3,
         )
     return _openscad_edit_agents[provider]
 
@@ -191,19 +188,6 @@ def _strip_markdown_fences(text: str) -> str:
 
 
 def _model_settings(provider: str, temperature: float, max_tokens: int) -> Any:
-    if provider == "pydantic":
-        # Opus 4.7: temperature not supported; cache system prompt for 1h
-        return AnthropicModelSettings(
-            max_tokens=max_tokens,
-            anthropic_cache_instructions="1h",
-        )
-    if provider == "pydantic-fast":
-        # Sonnet 4.6: temperature supported; cache system prompt for 1h
-        return AnthropicModelSettings(
-            max_tokens=max_tokens,
-            temperature=temperature,
-            anthropic_cache_instructions="1h",
-        )
     return {"temperature": temperature, "max_tokens": max_tokens}
 
 
@@ -231,7 +215,7 @@ def _build_meta(cfg: dict, latency_ms: float, usage: Any) -> dict:
 
 async def run_generate(
     prompt: str,
-    provider: str = "pydantic",
+    provider: str = "groq",
     temperature: float = 0.75,
     max_tokens: int = 8192,
     session_id: str | None = None,
@@ -275,7 +259,7 @@ async def run_generate(
 async def run_planner(
     transcript: list[TranscriptEntry],
     existing_blocks: list[PlanBlock],
-    provider: str = "pydantic",
+    provider: str = "groq",
     temperature: float = 0.3,
     max_tokens: int = 4096,
     session_id: str | None = None,
@@ -353,7 +337,7 @@ def _expand_multiline_entries(
 async def run_planner_chunked(
     transcript: list[TranscriptEntry],
     existing_blocks: list[PlanBlock],
-    provider: str = "pydantic-fast",
+    provider: str = "groq",
     temperature: float = 0.3,
     max_tokens: int = 4096,
 ) -> AsyncGenerator[tuple[str, Any], None]:
@@ -427,7 +411,7 @@ async def run_planner_chunked(
 async def run_openscad_meeting(
     transcript: list[TranscriptEntry],
     blocks: list[PlanBlock],
-    provider: str = "pydantic",
+    provider: str = "groq",
     temperature: float = 0.5,
     max_tokens: int = 8192,
     session_id: str | None = None,
@@ -484,7 +468,7 @@ async def run_openscad_meeting(
 async def run_openscad_edit(
     current_script: str,
     changed_blocks: list[PlanBlock],
-    provider: str = "pydantic",
+    provider: str = "groq",
     max_tokens: int = 2048,
 ) -> tuple[str, list[ScriptEdit], dict]:
     """Apply targeted edits to an existing OpenSCAD script based on changed blocks.

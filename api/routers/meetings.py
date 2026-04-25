@@ -35,8 +35,7 @@ def _get_meeting_or_404(meeting_id: UUID) -> Meeting:
 
 
 class ProviderEnum(str, Enum):
-    pydantic = "pydantic"
-    pydantic_fast = "pydantic-fast"
+    groq = "groq"
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +163,7 @@ class OpenSCADResult(BaseModel):
 @router.post("/meetings/{meeting_id}/agent/plan", tags=["agents"])
 async def trigger_planner(
     meeting_id: UUID,
-    provider: ProviderEnum = Query(default=ProviderEnum.pydantic_fast),
+    provider: ProviderEnum = Query(default=ProviderEnum.groq),
     temperature: float = Query(default=0.3, ge=0.0, le=2.0),
     max_tokens: int = Query(default=4096, ge=256, le=16384),
 ):
@@ -198,7 +197,7 @@ async def trigger_planner(
                 max_tokens=max_tokens,
             ):
                 if etype == "chunk_start":
-                    yield f"data: {json.dumps({'type': 'chunk_start', **payload})}\n\n"
+                    yield f"data: {json.dumps({'type': 'chunk_start', 'prev_count': prev_count, **payload})}\n\n"
 
                 elif etype == "chunk_result":
                     output = payload
@@ -246,7 +245,7 @@ async def trigger_planner(
 @router.post("/meetings/{meeting_id}/agent/model", response_model=OpenSCADResult, tags=["agents"])
 async def trigger_openscad(
     meeting_id: UUID,
-    provider: ProviderEnum = Query(default=ProviderEnum.pydantic),
+    provider: ProviderEnum = Query(default=ProviderEnum.groq),
     temperature: float = Query(default=0.5, ge=0.0, le=2.0),
     max_tokens: int = Query(default=8192, ge=256, le=16384),
 ):

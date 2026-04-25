@@ -4,7 +4,7 @@ import type { Peer } from "../lib/useConference";
 import AttendeeList from "./AttendeeList";
 import ControlBar from "./ControlBar";
 import TranscriptPanel from "./TranscriptPanel";
-import CadPanel from "./CadPanel";
+import CadPanel, { type ModelIteration } from "./CadPanel";
 import PlanSidebar, { type PlanBlock } from "./PlanSidebar";
 
 interface TranscriptLine {
@@ -40,6 +40,9 @@ interface ConferenceRoomProps {
   cadCode?: string | null;
   cadLoading?: boolean;
   onUpdateCad?: () => void;
+  modelIterations?: ModelIteration[];
+  viewingVersionId?: string | null;
+  onSelectVersion?: (id: string | null) => void;
 }
 
 export default function ConferenceRoom({
@@ -62,6 +65,9 @@ export default function ConferenceRoom({
   cadCode,
   cadLoading,
   onUpdateCad,
+  modelIterations,
+  viewingVersionId,
+  onSelectVersion,
 }: ConferenceRoomProps) {
   const shareUrl = typeof window !== "undefined"
     ? `${window.location.origin}/${conferenceId}`
@@ -98,7 +104,14 @@ export default function ConferenceRoom({
         />
 
         {/* Middle column — CAD Panel (tabs + prompt) */}
-        <CadPanel cadCode={cadCode} cadLoading={cadLoading} onUpdateCad={onUpdateCad} />
+        <CadPanel
+          cadCode={cadCode}
+          cadLoading={cadLoading}
+          onUpdateCad={onUpdateCad}
+          modelIterations={modelIterations}
+          viewingVersionId={viewingVersionId}
+          onSelectVersion={onSelectVersion}
+        />
 
         {/* Right column — Transcript + Attendees + Controls */}
         <div className="flex-1 flex flex-col gap-3 min-h-0">

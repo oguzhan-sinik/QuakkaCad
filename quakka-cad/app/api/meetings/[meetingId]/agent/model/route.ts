@@ -1,4 +1,3 @@
-// Route handler instead of a rewrite so there is no proxy timeout on long LLM calls.
 export const maxDuration = 300;
 
 const API_BASE = process.env.API_BASE_URL ?? "http://localhost:8000";
@@ -16,6 +15,7 @@ export async function POST(
   } catch (e) {
     return Response.json({ detail: `Upstream error: ${e}` }, { status: 502 });
   }
+
   const body = await upstream.arrayBuffer();
   return new Response(body, {
     status: upstream.status,

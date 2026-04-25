@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PlanBlock } from "../components/PlanSidebar";
+import type { ModelIteration } from "../components/CadPanel";
 import { useConference } from "../lib/useConference";
 import { useScribe } from "../lib/useScribe";
 import { useTranscript } from "../components/TranscriptPanel";
@@ -31,6 +32,10 @@ export default function ConferencePage() {
   const [cadCode, setCadCode] = useState<string | null>(null);
   const [cadLoading, setCadLoading] = useState(false);
   const [planUpdatedForCad, setPlanUpdatedForCad] = useState(false);
+  const [modelIterations, setModelIterations] = useState<ModelIteration[]>([]);
+  const [viewingVersionId, setViewingVersionId] = useState<string | null>(null);
+  const modelIterationsRef = useRef<ModelIteration[]>([]);
+  modelIterationsRef.current = modelIterations;
   const cadLoadingRef = useRef(false);
   cadLoadingRef.current = cadLoading;
   const hasRunCadOnce = useRef(false);
@@ -43,7 +48,6 @@ export default function ConferencePage() {
   plannerLoadingRef.current = plannerLoading;
   const lastPlannerLinesRef = useRef(0);
   // Records the frontend line index (= postedCountRef before posting) at planner run start
-  const plannerBatchStartRef = useRef(0);
 
   const conference = useConference({
     conferenceId,
@@ -70,6 +74,10 @@ export default function ConferencePage() {
     if (lines.length > 0) setTranscriptUpdated(true);
   }, [lines.length]);
 
+  useEffect(() => {
+    if (partials.size > 0) setTranscriptUpdated(true);
+  }, [partials.size]);
+
   const handleClearTranscript = useCallback(() => {
     clearTranscript();
     postedCountRef.current = 0;
@@ -87,6 +95,8 @@ export default function ConferencePage() {
       if (!res.ok) throw new Error(await res.text());
       const result = await res.json();
       setCadCode(result.iteration.script);
+      setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
+      setViewingVersionId(null);
     } catch (e) {
       console.error("OpenSCAD agent error:", e);
     } finally {
@@ -98,8 +108,6 @@ export default function ConferencePage() {
     const mid = meetingIdRef.current;
     if (!mid || plannerLoadingRef.current) return;
 
-    // Record where this batch starts (before we reset lastPlannerLinesRef)
-    plannerBatchStartRef.current = postedCountRef.current;
     lastPlannerLinesRef.current = linesRef.current.length;
     setTranscriptUpdated(false);
     setPlannerLoading(true);
@@ -162,8 +170,9 @@ export default function ConferencePage() {
           if (type === "chunk_start") {
             // New chunk: clear previous block highlights, advance scan cursor
             setTargetedBlockIds(new Set());
+            const prevCount = (event.prev_count as number) ?? 0;
             const batchOffsetEnd = event.batch_offset_end as number;
-            setProcessingUpToEntry(plannerBatchStartRef.current + batchOffsetEnd);
+            setProcessingUpToEntry(prevCount + batchOffsetEnd);
 
           } else if (type === "block_created") {
             blocksCreatedThisRun++;
@@ -209,6 +218,19 @@ export default function ConferencePage() {
     }
   }, [handleRunOpenSCAD]);
 
+  const handleSelectVersion = useCallback((id: string | null) => {
+    if (id === null) {
+      setViewingVersionId(null);
+      setCadCode(modelIterationsRef.current.at(-1)?.script ?? null);
+    } else {
+      const iter = modelIterationsRef.current.find(i => i.id === id);
+      if (iter) {
+        setViewingVersionId(id);
+        setCadCode(iter.script);
+      }
+    }
+  }, []);
+
   useScribe({
     stream: conference.localStream,
     isMuted: conference.isMuted,
@@ -221,7 +243,7 @@ export default function ConferencePage() {
       if (!plannerLoadingRef.current && linesRef.current.length > lastPlannerLinesRef.current) {
         handleRunPlanner();
       }
-    }, 5000);
+    }, 1000);
     return () => clearInterval(id);
   }, [meetingId, handleRunPlanner]);
 
@@ -323,7 +345,10 @@ export default function ConferencePage() {
       onRunPlanner={transcriptUpdated ? handleRunPlanner : undefined}
       cadCode={cadCode}
       cadLoading={cadLoading}
-      onUpdateCad={planUpdatedForCad ? handleRunOpenSCAD : undefined}
+      onUpdateCad={planUpdatedForCad && viewingVersionId === null ? handleRunOpenSCAD : undefined}
+      modelIterations={modelIterations}
+      viewingVersionId={viewingVersionId}
+      onSelectVersion={handleSelectVersion}
     />
   );
 }

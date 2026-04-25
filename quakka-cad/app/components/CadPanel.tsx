@@ -14,13 +14,31 @@ interface GenerateResult {
   session_id: string;
 }
 
+export interface ModelIteration {
+  id: string;
+  timestamp: string;
+  script: string;
+  reasoning: string;
+  applied_lessons: string[];
+}
+
 interface CadPanelProps {
   cadCode?: string | null;
   cadLoading?: boolean;
   onUpdateCad?: () => void;
+  modelIterations?: ModelIteration[];
+  viewingVersionId?: string | null;
+  onSelectVersion?: (id: string | null) => void;
 }
 
-export default function CadPanel({ cadCode, cadLoading = false, onUpdateCad }: CadPanelProps) {
+export default function CadPanel({
+  cadCode,
+  cadLoading = false,
+  onUpdateCad,
+  modelIterations,
+  viewingVersionId,
+  onSelectVersion,
+}: CadPanelProps) {
   const [tab, setTab] = useState<Tab>("code");
   const [prompt, setPrompt] = useState("");
   const [code, setCode] = useState("");
@@ -615,6 +633,37 @@ export default function CadPanel({ cadCode, cadLoading = false, onUpdateCad }: C
           )}
         </div>
       </div>
+
+      {/* Version history strip */}
+      {modelIterations && modelIterations.length > 1 && (
+        <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-zinc-800 flex-shrink-0">
+          <span className="text-[10px] text-zinc-600 uppercase tracking-wider mr-0.5">History</span>
+          {modelIterations.map((iter, i) => {
+            const isLatest = i === modelIterations.length - 1;
+            const isViewing = viewingVersionId === iter.id || (viewingVersionId == null && isLatest);
+            return (
+              <button
+                key={iter.id}
+                onClick={() => onSelectVersion?.(isLatest ? null : iter.id)}
+                title={iter.reasoning}
+                className={`text-[10px] px-1.5 py-0.5 rounded font-mono transition-colors ${
+                  isViewing ? "bg-zinc-700 text-zinc-200" : "text-zinc-600 hover:text-zinc-400"
+                }`}
+              >
+                v{i + 1}
+              </button>
+            );
+          })}
+          {viewingVersionId != null && (
+            <button
+              onClick={() => onSelectVersion?.(null)}
+              className="ml-1 text-[10px] text-amber-400 hover:text-amber-300 transition-colors"
+            >
+              ← latest
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Content area — both tabs always mounted, toggled via CSS */}
       <div className="flex-1 min-h-0 overflow-hidden relative">

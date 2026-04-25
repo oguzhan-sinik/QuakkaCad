@@ -225,8 +225,8 @@ export default function TranscriptPanel({
           return [lineEl];
         })}
 
-        {/* Cursor at end when all current lines are being scanned in one chunk */}
-        {processingUpToEntry != null && processingUpToEntry >= lines.length && lines.length > 0 && (
+        {/* Trailing cursor: always show when scanning and no mid-transcript cursor is active */}
+        {isScanning && (processingUpToEntry == null || processingUpToEntry >= lines.length) && lines.length > 0 && (
           <div className="flex items-center gap-2 my-1">
             <div className="flex-1 h-px bg-indigo-500/40" />
             <span className="text-[10px] text-indigo-400 font-mono animate-pulse whitespace-nowrap">
