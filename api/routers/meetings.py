@@ -34,6 +34,7 @@ def _get_meeting_or_404(meeting_id: UUID) -> Meeting:
 
 class ProviderEnum(str, Enum):
     pydantic = "pydantic"
+    pydantic_fast = "pydantic-fast"
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +166,7 @@ class OpenSCADResult(BaseModel):
 @router.post("/meetings/{meeting_id}/agent/plan", response_model=PlannerResult, tags=["agents"])
 async def trigger_planner(
     meeting_id: UUID,
-    provider: ProviderEnum = Query(default=ProviderEnum.pydantic),
+    provider: ProviderEnum = Query(default=ProviderEnum.pydantic_fast),
     temperature: float = Query(default=0.3, ge=0.0, le=2.0),
     max_tokens: int = Query(default=4096, ge=256, le=16384),
 ):

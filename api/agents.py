@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -67,6 +68,12 @@ PROVIDER_CONFIG: dict[str, dict] = {
         "model": "gateway/anthropic:claude-opus-4-7",
         "model_name": "gateway/anthropic:claude-opus-4-7",
         "label": "Pydantic Gateway (Claude Opus 4.7)",
+        "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
+    },
+    "pydantic-fast": {
+        "model": "gateway/anthropic:claude-sonnet-4-6",
+        "model_name": "gateway/anthropic:claude-sonnet-4-6",
+        "label": "Pydantic Gateway (Claude Sonnet 4.6)",
         "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
     },
 }
@@ -150,9 +157,16 @@ def _strip_markdown_fences(text: str) -> str:
 
 def _model_settings(provider: str, temperature: float, max_tokens: int) -> Any:
     if provider == "pydantic":
-        # Claude Opus 4.7: temperature is not supported; cache the system prompt for 1 h
+        # Opus 4.7: temperature not supported; cache system prompt for 1h
         return AnthropicModelSettings(
             max_tokens=max_tokens,
+            anthropic_cache_instructions="1h",
+        )
+    if provider == "pydantic-fast":
+        # Sonnet 4.6: temperature supported; cache system prompt for 1h
+        return AnthropicModelSettings(
+            max_tokens=max_tokens,
+            temperature=temperature,
             anthropic_cache_instructions="1h",
         )
     return {"temperature": temperature, "max_tokens": max_tokens}
@@ -227,9 +241,9 @@ async def run_planner(
     )
 
     t0 = time.perf_counter()
-    result = await agent.run(
-        prompt,
-        model_settings=_model_settings(provider, temperature, max_tokens),
+    result = await asyncio.wait_for(
+        agent.run(prompt, model_settings=_model_settings(provider, temperature, max_tokens)),
+        timeout=90,
     )
     latency_ms = (time.perf_counter() - t0) * 1000
 
@@ -263,9 +277,9 @@ async def run_openscad_meeting(
     )
 
     t0 = time.perf_counter()
-    result = await agent.run(
-        prompt,
-        model_settings=_model_settings(provider, temperature, max_tokens),
+    result = await asyncio.wait_for(
+        agent.run(prompt, model_settings=_model_settings(provider, temperature, max_tokens)),
+        timeout=240,
     )
     latency_ms = (time.perf_counter() - t0) * 1000
 
