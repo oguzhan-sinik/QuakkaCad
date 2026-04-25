@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Unicorn Mafia - 3D Generator</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --border: #2a2a3a;
+    --text: #e0e0e8;
+    --muted: #8888a0;
+    --accent: #7c5cfc;
+    --accent-hover: #6a48e6;
+    --green: #4ade80;
+    --orange: #fb923c;
+    --red: #f87171;
+    --blue: #60a5fa;
+    --font: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+  header span { color: var(--muted); font-size: 13px; }
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 32px;
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 24px;
+    height: calc(100vh - 73px);
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+  }
+  .panel-title {
+    font-size: 13px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted);
+  }
+  label { font-size: 13px; font-weight: 500; color: var(--muted); display: block; margin-bottom: 6px; }
+  textarea {
+    width: 100%; min-height: 120px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; color: var(--text); font-size: 14px; font-family: inherit;
+    resize: vertical; outline: none; transition: border-color 0.2s;
+  }
+  textarea:focus { border-color: var(--accent); }
+  .provider-toggle { display: flex; gap: 8px; flex-wrap: wrap; }
+  .provider-btn {
+    flex: 1; min-width: 100px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--muted);
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    transition: all 0.2s; text-align: center;
+  }
+  .provider-btn.active { border-color: var(--accent); background: rgba(124, 92, 252, 0.1); color: var(--accent); }
+  .provider-btn:hover:not(.active) { border-color: #444; color: var(--text); }
+  .generate-btn {
+    width: 100%; padding: 12px; border: none; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: background 0.2s;
+  }
+  .generate-btn:hover { background: var(--accent-hover); }
+  .generate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .compare-btn {
+    width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+    background: transparent; color: var(--muted); font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .compare-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .compare-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-card {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+  .stat-value { font-size: 18px; font-weight: 700; margin-top: 2px; font-family: var(--font); }
+  .stat-value.fast { color: var(--green); }
+  .stat-value.mid { color: var(--orange); }
+  .stat-value.slow { color: var(--red); }
+  .right-panel { display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
+  .tabs {
+    display: flex; gap: 4px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px; flex-shrink: 0;
+  }
+  .tab {
+    flex: 1; padding: 8px 12px; border: none; border-radius: 6px;
+    background: transparent; color: var(--muted); font-size: 13px;
+    font-weight: 500; cursor: pointer; transition: all 0.2s;
+  }
+  .tab.active { background: var(--surface); color: var(--text); }
+  .tab:hover:not(.active) { color: var(--text); }
+  .code-area { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+  .code-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; flex-shrink: 0;
+  }
+  .code-header span { font-size: 12px; color: var(--muted); font-family: var(--font); }
+  .copy-btn, .download-btn {
+    padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: transparent; color: var(--muted); font-size: 12px;
+    cursor: pointer; transition: all 0.2s; font-family: var(--font);
+  }
+  .copy-btn:hover, .download-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .code-block {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; overflow: auto; font-family: var(--font); font-size: 13px;
+    line-height: 1.6; white-space: pre; tab-size: 4; color: var(--text);
+  }
+  .code-block .comment { color: #6a9955; }
+  .code-block .keyword { color: #c586c0; }
+  .code-block .number { color: #b5cea8; }
+  .code-block .string { color: #ce9178; }
+  .code-block .function { color: #dcdcaa; }
+  .code-block .boolean { color: #569cd6; }
+  .viewer-3d {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; display: none; position: relative;
+  }
+  .viewer-3d canvas { width: 100%; height: 100%; display: block; }
+  .viewer-hint {
+    position: absolute; bottom: 12px; right: 12px; font-size: 11px;
+    color: var(--muted); background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 4px;
+  }
+  .viewer-info {
+    position: absolute; top: 12px; left: 12px; font-size: 11px;
+    color: var(--muted); background: rgba(0,0,0,0.6); padding: 6px 10px;
+    border-radius: 4px; max-width: 300px; line-height: 1.5;
+  }
+  .empty-state {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px; border: 1px dashed var(--border); border-radius: 8px;
+  }
+  .compare-results { display: none; gap: 8px; flex-direction: column; flex-shrink: 0; }
+  .compare-results.visible { display: flex; }
+  .compare-card {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.2s;
+  }
+  .compare-card:hover { border-color: #444; }
+  .compare-card.selected { border-color: var(--accent); }
+  .compare-card h4 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .compare-card .metrics {
+    display: flex; gap: 16px; font-size: 12px; color: var(--muted); font-family: var(--font);
+  }
+  .compare-card .metrics strong { color: var(--text); }
+  .winner { border-color: var(--green) !important; }
+  .winner h4::after {
+    content: ' (fastest)'; color: var(--green); font-weight: 400; font-size: 11px;
+  }
+  .loading-spinner {
+    display: inline-block; width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
+    border-radius: 50%; animation: spin 0.6s linear infinite;
+    vertical-align: middle; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 900px) { .container { grid-template-columns: 1fr; height: auto; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Unicorn Mafia</h1>
+  <span>3D Model Generator</span>
+</header>
+
+<div class="container">
+  <div class="panel">
+    <div class="panel-title">Generate</div>
+
+    <div>
+      <label>Describe your 3D model</label>
+      <textarea id="prompt" placeholder="e.g. A rocket fin can assembly with 4 fins held between two rings..."></textarea>
+    </div>
+
+    <div>
+      <label>Provider</label>
+      <div class="provider-toggle">
+        <button class="provider-btn active" data-provider="mercury">Mercury 2</button>
+        <button class="provider-btn" data-provider="cerebras">Cerebras</button>
+        <button class="provider-btn" data-provider="claude">Claude</button>
+      </div>
+    </div>
+
+    <button class="generate-btn" id="generateBtn" onclick="generate()">Generate OpenSCAD</button>
+    <button class="compare-btn" id="compareBtn" onclick="compareAll()">Run all 3 & compare</button>
+
+    <div class="stats" id="stats" style="display:none">
+      <div class="stat-card">
+        <div class="stat-label">Latency</div>
+        <div class="stat-value" id="statLatency">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Tokens/sec</div>
+        <div class="stat-value" id="statTps">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Output tokens</div>
+        <div class="stat-value" id="statTokens">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Provider</div>
+        <div class="stat-value" id="statProvider" style="font-size:13px">-</div>
+      </div>
+    </div>
+
+    <div class="compare-results" id="compareResults"></div>
+  </div>
+
+  <div class="panel right-panel">
+    <div class="tabs">
+      <button class="tab active" data-tab="code" onclick="switchTab('code')">Code</button>
+      <button class="tab" data-tab="preview" onclick="switchTab('preview')">3D Preview</button>
+    </div>
+
+    <div class="code-area" id="codeView">
+      <div class="code-header">
+        <span id="codeFilename">output.scad</span>
+        <div style="display:flex; gap:6px">
+          <button class="copy-btn" onclick="copyCode()">Copy</button>
+          <button class="download-btn" onclick="downloadScad()">Download .scad</button>
+        </div>
+      </div>
+      <div class="code-block" id="codeBlock">
+        <div class="empty-state">Your generated OpenSCAD code will appear here</div>
+      </div>
+    </div>
+
+    <div class="viewer-3d" id="previewView">
+      <canvas id="canvas3d"></canvas>
+      <div class="viewer-info" id="viewerInfo">Parsed primitives will appear here. For full accuracy, download the .scad and open in OpenSCAD.</div>
+      <div class="viewer-hint">Drag to rotate | Scroll to zoom | Right-drag to pan</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+let currentCode = '';
+let selectedProvider = 'mercury';
+let compareData = {};
+let scene, camera, renderer;
+let rotX = 0.5, rotY = 0.5, dist = 300, panX = 0, panY = 0;
+let threeReady = false;
+
+// --- Provider toggle ---
+document.querySelectorAll('.provider-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.provider-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedProvider = btn.dataset.provider;
+  });
+});
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+  const codeView = document.getElementById('codeView');
+  const previewView = document.getElementById('previewView');
+  if (tab === 'code') {
+    codeView.style.display = 'flex';
+    previewView.style.display = 'none';
+  } else {
+    codeView.style.display = 'none';
+    previewView.style.display = 'block';
+    if (!threeReady) initThree();
+    resizeRenderer();
+    renderPreview();
+  }
+}
+
+// --- API calls ---
+async function generate() {
+  const prompt = document.getElementById('prompt').value.trim();
+  if (!prompt) return;
+  const btn = document.getElementById('generateBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loading-spinner"></span>Generating...';
+  try {
+    const res = await fetch('/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, provider: selectedProvider }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Request failed');
+    currentCode = data.openscad_code;
+    displayCode(currentCode);
+    showStats(data);
+    renderPreview();
+  } catch (err) {
+    document.getElementById('codeBlock').innerHTML =
+      `<div class="empty-state" style="color:var(--red)">${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate OpenSCAD';
+  }
+}
+
+async function compareAll() {
+  const prompt = document.getElementById('prompt').value.trim();
+  if (!prompt) return;
+  const btn = document.getElementById('compareBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loading-spinner"></span>Running all 3...';
+  const resultsEl = document.getElementById('compareResults');
+  resultsEl.classList.add('visible');
+  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:8px">Waiting for results...</div>';
+  compareData = {};
+
+  const providers = ['mercury', 'cerebras', 'claude'];
+
+  try {
+    const results = await Promise.allSettled(
+      providers.map(p =>
+        fetch('/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, provider: p }),
+        }).then(r => r.json().then(data => {
+          if (!r.ok) throw new Error(data.detail || 'Failed');
+          return data;
+        }))
+      )
+    );
+
+    let html = '';
+    let fastestMs = Infinity;
+    let fastestKey = '';
+
+    providers.forEach((p, i) => {
+      const r = results[i];
+      if (r.status === 'fulfilled') {
+        compareData[p] = r.value;
+        if (r.value.latency_ms < fastestMs) {
+          fastestMs = r.value.latency_ms;
+          fastestKey = p;
+        }
+      } else {
+        compareData[p] = null;
+      }
+    });
+
+    providers.forEach(p => {
+      const d = compareData[p];
+      const isFastest = p === fastestKey;
+      const isErr = !d;
+      html += `<div class="compare-card ${isFastest ? 'winner' : ''}" onclick="showCompareResult('${p}')">
+        <h4>${d ? d.provider : p}</h4>
+        <div class="metrics">
+          ${isErr
+            ? '<span style="color:var(--red)">Error</span>'
+            : `<span>Latency: <strong>${(d.latency_ms/1000).toFixed(1)}s</strong></span>
+               <span>tok/s: <strong>${d.tokens_per_second || '-'}</strong></span>
+               <span>Tokens: <strong>${d.usage?.completion_tokens || '-'}</strong></span>`
+          }
+        </div>
+      </div>`;
+    });
+
+    resultsEl.innerHTML = html;
+
+    // Show the fastest result by default
+    if (fastestKey && compareData[fastestKey]) {
+      showCompareResult(fastestKey);
+    }
+  } catch (err) {
+    resultsEl.innerHTML = `<div style="color:var(--red);font-size:13px;padding:8px">${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run all 3 & compare';
+  }
+}
+
+function showCompareResult(provider) {
+  const d = compareData[provider];
+  if (!d) return;
+  currentCode = d.openscad_code;
+  displayCode(currentCode);
+  showStats(d);
+  renderPreview();
+  // Highlight selected card
+  document.querySelectorAll('.compare-card').forEach(c => c.classList.remove('selected'));
+  event?.target?.closest?.('.compare-card')?.classList.add('selected');
+}
+
+function showStats(data) {
+  document.getElementById('stats').style.display = 'grid';
+  const latency = data.latency_ms;
+  const latencyEl = document.getElementById('statLatency');
+  latencyEl.textContent = `${(latency / 1000).toFixed(1)}s`;
+  latencyEl.className = 'stat-value ' + (latency < 3000 ? 'fast' : latency < 8000 ? 'mid' : 'slow');
+  const tpsEl = document.getElementById('statTps');
+  tpsEl.textContent = data.tokens_per_second || '-';
+  tpsEl.className = 'stat-value ' + ((data.tokens_per_second || 0) > 100 ? 'fast' : 'mid');
+  document.getElementById('statTokens').textContent = data.usage?.completion_tokens || '-';
+  document.getElementById('statProvider').textContent = data.provider;
+}
+
+// --- Code display ---
+function highlightOpenSCAD(code) {
+  return code
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/(\/\/.*$)/gm, '<span class="comment">$1</span>')
+    .replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="comment">$1</span>')
+    .replace(/("(?:[^"\\]|\\.)*")/g, '<span class="string">$1</span>')
+    .replace(/\b(true|false)\b/g, '<span class="boolean">$1</span>')
+    .replace(/\b(module|function|if|else|for|let|each|include|use)\b/g, '<span class="keyword">$1</span>')
+    .replace(/\b(cube|sphere|cylinder|circle|square|polygon|polyhedron|linear_extrude|rotate_extrude|translate|rotate|scale|mirror|resize|color|hull|minkowski|union|difference|intersection|render|projection|surface|import|text)\b/g, '<span class="function">$1</span>')
+    .replace(/\b(\d+\.?\d*)\b/g, '<span class="number">$1</span>');
+}
+
+function displayCode(code) {
+  document.getElementById('codeBlock').innerHTML = highlightOpenSCAD(code);
+}
+
+function copyCode() {
+  if (!currentCode) return;
+  navigator.clipboard.writeText(currentCode);
+}
+
+function downloadScad() {
+  if (!currentCode) return;
+  const blob = new Blob([currentCode], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'model.scad';
+  a.click();
+}
+
+// === 3D Preview with variable resolution ===
+function initThree() {
+  const canvas = document.getElementById('canvas3d');
+  const container = document.getElementById('previewView');
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0a0f);
+
+  camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 5000);
+  updateCamera();
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setSize(container.clientWidth, container.clientHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
+
+  scene.add(new THREE.AmbientLight(0x404060, 0.6));
+  const dir1 = new THREE.DirectionalLight(0xffffff, 0.8);
+  dir1.position.set(200, 300, 200);
+  scene.add(dir1);
+  const dir2 = new THREE.DirectionalLight(0x8080ff, 0.3);
+  dir2.position.set(-200, -100, -200);
+  scene.add(dir2);
+
+  // Grid on XY plane
+  const grid = new THREE.GridHelper(400, 40, 0x2a2a3a, 0x1a1a2a);
+  grid.rotation.x = Math.PI / 2;
+  scene.add(grid);
+  scene.add(new THREE.AxesHelper(60));
+
+  // Mouse controls
+  let isDragging = false, isRightDrag = false, prevX, prevY;
+  canvas.addEventListener('mousedown', e => {
+    isDragging = true;
+    isRightDrag = e.button === 2;
+    prevX = e.clientX; prevY = e.clientY;
+  });
+  canvas.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    const dx = e.clientX - prevX, dy = e.clientY - prevY;
+    if (isRightDrag) {
+      panX += dx * 0.5; panY -= dy * 0.5;
+    } else {
+      rotY += dx * 0.01;
+      rotX += dy * 0.01;
+      rotX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, rotX));
+    }
+    prevX = e.clientX; prevY = e.clientY;
+    updateCamera();
+  });
+  canvas.addEventListener('mouseup', () => isDragging = false);
+  canvas.addEventListener('mouseleave', () => isDragging = false);
+  canvas.addEventListener('wheel', e => {
+    dist += e.deltaY * 0.5;
+    dist = Math.max(20, Math.min(2000, dist));
+    updateCamera();
+    e.preventDefault();
+  }, { passive: false });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  threeReady = true;
+
+  (function animate() {
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+  })();
+
+  window.addEventListener('resize', resizeRenderer);
+}
+
+function updateCamera() {
+  if (!camera) return;
+  camera.position.x = dist * Math.cos(rotX) * Math.sin(rotY) + panX;
+  camera.position.y = dist * Math.sin(rotX) + panY;
+  camera.position.z = dist * Math.cos(rotX) * Math.cos(rotY);
+  camera.lookAt(panX, panY, 0);
+}
+
+function resizeRenderer() {
+  if (!renderer) return;
+  const c = document.getElementById('previewView');
+  renderer.setSize(c.clientWidth, c.clientHeight);
+  camera.aspect = c.clientWidth / c.clientHeight;
+  camera.updateProjectionMatrix();
+}
+
+// --- OpenSCAD parser ---
+// Resolves top-level variable assignments, then extracts primitives with transforms
+function renderPreview() {
+  if (!threeReady || !currentCode) return;
+
+  // Clear old meshes
+  const toRemove = [];
+  scene.traverse(child => { if (child.isMesh) toRemove.push(child); });
+  toRemove.forEach(m => { scene.remove(m); m.geometry.dispose(); });
+
+  const parsed = parseOpenSCAD(currentCode);
+  const info = document.getElementById('viewerInfo');
+
+  if (parsed.length === 0) {
+    info.textContent = 'No primitives detected. Download .scad for full render.';
+    return;
+  }
+
+  info.textContent = `Showing ${parsed.length} primitive(s). Download .scad for full accuracy.`;
+
+  const colors = [0x7c5cfc, 0x4ade80, 0xfb923c, 0x60a5fa, 0xf87171, 0xa78bfa];
+  let colorIdx = 0;
+
+  parsed.forEach(p => {
+    let geom;
+    if (p.type === 'cube') {
+      geom = new THREE.BoxGeometry(p.x, p.y, p.z);
+    } else if (p.type === 'cylinder') {
+      geom = new THREE.CylinderGeometry(p.r2, p.r1, p.h, 48);
+      // OpenSCAD cylinders grow along Z; Three.js along Y — rotate
+      geom.rotateX(Math.PI / 2);
+    } else if (p.type === 'sphere') {
+      geom = new THREE.SphereGeometry(p.r, 32, 32);
+    } else {
+      return;
+    }
+
+    const mat = new THREE.MeshPhongMaterial({
+      color: p.color || colors[colorIdx % colors.length],
+      shininess: 60, transparent: true, opacity: 0.85,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+
+    // Apply transforms
+    if (p.translate) mesh.position.set(p.translate[0], p.translate[1], p.translate[2]);
+    if (p.rotate) {
+      mesh.rotation.set(
+        p.rotate[0] * Math.PI / 180,
+        p.rotate[1] * Math.PI / 180,
+        p.rotate[2] * Math.PI / 180
+      );
+    }
+
+    scene.add(mesh);
+    colorIdx++;
+  });
+
+  // Auto-fit camera
+  const box = new THREE.Box3();
+  scene.traverse(c => { if (c.isMesh) box.expandByObject(c); });
+  if (!box.isEmpty()) {
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    dist = maxDim * 2.5;
+    panX = center.x; panY = center.y;
+    updateCamera();
+  }
+}
+
+function parseOpenSCAD(code) {
+  // Step 1: resolve variable assignments
+  const vars = {};
+  const varRegex = /^(\w+)\s*=\s*([^;]+);/gm;
+  let m;
+  while ((m = varRegex.exec(code)) !== null) {
+    const name = m[1];
+    const expr = m[2].trim();
+    vars[name] = resolveExpr(expr, vars);
+  }
+
+  // Step 2: strip comments
+  let clean = code.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // Step 3: find primitives with optional preceding translate/rotate
+  const primitives = [];
+
+  // Match patterns like: translate([x,y,z]) rotate([x,y,z]) cube([x,y,z]);
+  // or standalone primitives
+  const blockRegex = /((?:translate\s*\(\s*\[[^\]]*\]\s*\)\s*)?(?:rotate\s*\(\s*\[[^\]]*\]\s*\)\s*)?)(cube|cylinder|sphere)\s*\(([^)]*)\)/g;
+
+  while ((m = blockRegex.exec(clean)) !== null) {
+    const prefix = m[1];
+    const type = m[2];
+    const args = m[3];
+
+    let translate = null, rotate = null;
+
+    const trMatch = prefix.match(/translate\s*\(\s*\[([^\]]*)\]/);
+    if (trMatch) {
+      translate = parseVec3(trMatch[1], vars);
+    }
+    const rotMatch = prefix.match(/rotate\s*\(\s*\[([^\]]*)\]/);
+    if (rotMatch) {
+      rotate = parseVec3(rotMatch[1], vars);
+    }
+
+    const prim = parsePrimitive(type, args, vars);
+    if (prim) {
+      prim.translate = translate;
+      prim.rotate = rotate;
+      primitives.push(prim);
+    }
+  }
+
+  return primitives;
+}
+
+function resolveExpr(expr, vars) {
+  // Handle simple expressions: numbers, arithmetic with variable references
+  expr = expr.replace(/\btrue\b/g, '1').replace(/\bfalse\b/g, '0');
+  // Replace known variable names with their values
+  for (const [k, v] of Object.entries(vars)) {
+    if (typeof v === 'number') {
+      expr = expr.replace(new RegExp('\\b' + k + '\\b', 'g'), String(v));
+    }
+  }
+  try {
+    // Only evaluate if it looks like a number expression
+    if (/^[\d\s+\-*/().]+$/.test(expr)) {
+      return Function('"use strict"; return (' + expr + ')')();
+    }
+  } catch {}
+  const n = parseFloat(expr);
+  return isNaN(n) ? expr : n;
+}
+
+function resolveValue(s, vars) {
+  s = s.trim();
+  if (vars[s] !== undefined && typeof vars[s] === 'number') return vars[s];
+  return resolveExpr(s, vars);
+}
+
+function parseVec3(str, vars) {
+  const parts = str.split(',').map(s => {
+    const v = resolveValue(s, vars);
+    return typeof v === 'number' ? v : 0;
+  });
+  return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
+}
+
+function parsePrimitive(type, argsStr, vars) {
+  // Parse named and positional args
+  const named = {};
+  const namedRegex = /(\w+)\s*=\s*([^,\]]+)/g;
+  let nm;
+  while ((nm = namedRegex.exec(argsStr)) !== null) {
+    named[nm[1]] = resolveValue(nm[2], vars);
+  }
+
+  if (type === 'cube') {
+    // cube([x,y,z]) or cube(size)
+    const vecMatch = argsStr.match(/\[([^\]]+)\]/);
+    if (vecMatch) {
+      const dims = parseVec3(vecMatch[1], vars);
+      return { type: 'cube', x: dims[0], y: dims[1], z: dims[2] };
+    }
+    const size = named.size || resolveValue(argsStr.replace(/center\s*=\s*\w+/g, '').trim(), vars);
+    if (typeof size === 'number') return { type: 'cube', x: size, y: size, z: size };
+    return null;
+  }
+
+  if (type === 'cylinder') {
+    const h = named.h || named.height || 10;
+    let r1 = named.r1 || named.r || (named.d ? named.d / 2 : (named.d1 ? named.d1 / 2 : 5));
+    let r2 = named.r2 || named.r || (named.d ? named.d / 2 : (named.d2 ? named.d2 / 2 : r1));
+    return { type: 'cylinder', h: typeof h === 'number' ? h : 10, r1: typeof r1 === 'number' ? r1 : 5, r2: typeof r2 === 'number' ? r2 : 5 };
+  }
+
+  if (type === 'sphere') {
+    const r = named.r || (named.d ? named.d / 2 : null);
+    if (typeof r === 'number') return { type: 'sphere', r };
+    // positional arg
+    const val = resolveValue(argsStr.replace(/\$fn\s*=\s*\d+/g, '').trim(), vars);
+    if (typeof val === 'number') return { type: 'sphere', r: val };
+    return { type: 'sphere', r: 10 };
+  }
+
+  return null;
+}
+
+// Ctrl+Enter to generate
+document.getElementById('prompt').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generate();
+});
+</script>
+</body>
+</html>
