@@ -22,8 +22,6 @@ interface UseConferenceOptions {
   onTranscript?: (event: TranscriptEvent) => void;
 }
 
-const SIGNALING_URL = "ws://localhost:3001";
-
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
@@ -141,8 +139,9 @@ export function useConference({ conferenceId, displayName, onTranscript }: UseCo
     localStreamRef.current = stream;
     setLocalStream(stream);
 
-    // Connect to signaling server
-    const ws = new WebSocket(`${SIGNALING_URL}/${conferenceId}`);
+    // Connect to signaling server (proxied through Next.js → FastAPI)
+    const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${wsProto}//${window.location.host}/ws/${conferenceId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -254,7 +253,7 @@ export function useConference({ conferenceId, displayName, onTranscript }: UseCo
     };
 
     ws.onerror = () => {
-      setError("Failed to connect to signaling server. Is it running on port 3001?");
+      setError("Failed to connect to signaling server. Is the API running?");
     };
   }, [conferenceId, displayName, createPeerConnection]);
 
