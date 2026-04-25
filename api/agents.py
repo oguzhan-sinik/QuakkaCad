@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Literal, Optional
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, PromptedOutput
+from pydantic import BaseModel, Field, ValidationError
+from pydantic_ai import Agent
 
 from mubit_client import get_generation_context, remember_generation
 from schemas import (
@@ -113,9 +115,9 @@ Rules:
 
 PROVIDER_CONFIG: dict[str, dict] = {
     "groq": {
-        "model": "gateway/groq:llama-3.3-70b-versatile",
-        "model_name": "llama-3.3-70b-versatile",
-        "label": "Pydantic Gateway / Groq (Llama 3.3 70B Versatile)",
+        "model": "gateway/groq:openai/gpt-oss-120b",
+        "model_name": "openai/gpt-oss-120b",
+        "label": "Pydantic Gateway / Groq (GPT OSS 120B)",
         "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
     },
 }
@@ -201,7 +203,7 @@ def _get_planner_agent(provider: str) -> Agent:
         _planner_agents[provider] = Agent(
             cfg["model"],
             system_prompt=PLANNER_SYSTEM_PROMPT,
-            output_type=PromptedOutput(LLMPlannerOutput),
+            output_type=str,
             retries=1,
         )
     return _planner_agents[provider]
@@ -291,6 +293,11 @@ def _llm_output_to_planner_output(
             version=prev_version + 1,
         ))
     return PlannerOutput(blocks_to_create=creates, blocks_to_update=updates)
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Remove <think>...</think> blocks emitted by reasoning models before the answer."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 def _strip_markdown_fences(text: str) -> str:
@@ -416,7 +423,12 @@ async def run_planner(
     )
     latency_ms = (time.perf_counter() - t0) * 1000
 
-    output = _llm_output_to_planner_output(result.output, existing_blocks)
+    raw = _strip_markdown_fences(_strip_think_blocks(result.output))
+    try:
+        llm_out = LLMPlannerOutput.model_validate(json.loads(raw))
+    except (json.JSONDecodeError, ValidationError) as e:
+        raise RuntimeError(f"Planner JSON parse failed: {e}\nRaw output: {raw[:500]}")
+    output = _llm_output_to_planner_output(llm_out, existing_blocks)
 
     asyncio.create_task(
         remember_generation("planner", session_id, prompt[:500], str(result.output), cfg["model_name"])
@@ -515,7 +527,14 @@ async def run_planner_chunked(
             yield ("error", {"detail": f"Chunk {chunk_index} agent error: {e}"})
             return
 
-        output = _llm_output_to_planner_output(result.output, running_blocks)
+        raw = _strip_markdown_fences(_strip_think_blocks(result.output))
+        try:
+            llm_out = LLMPlannerOutput.model_validate(json.loads(raw))
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger.warning("planner chunk %d parse error for provider=%s: %s\nRaw: %s", chunk_index, provider, e, raw[:500])
+            yield ("error", {"detail": f"Chunk {chunk_index} parse error: {e}"})
+            return
+        output = _llm_output_to_planner_output(llm_out, running_blocks)
 
         # Accumulate into running_blocks so later chunks see blocks from earlier ones
         for b in output.blocks_to_create:
