@@ -201,7 +201,7 @@
       <div class="provider-toggle">
         <button class="provider-btn active" data-provider="mercury">Mercury 2</button>
         <button class="provider-btn" data-provider="cerebras">Cerebras</button>
-        <button class="provider-btn" data-provider="claude">Claude</button>
+        <button class="provider-btn" data-provider="pydantic">Pydantic</button>
       </div>
     </div>
 
@@ -331,7 +331,7 @@ async function compareAll() {
   resultsEl.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:8px">Waiting for results...</div>';
   compareData = {};
 
-  const providers = ['mercury', 'cerebras', 'claude'];
+  const providers = ['mercury', 'cerebras', 'pydantic'];
 
   try {
     const results = await Promise.allSettled(

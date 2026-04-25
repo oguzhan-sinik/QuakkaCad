@@ -8,16 +8,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
-import logfire
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 ENV_PATH = Path(__file__).parent / ".env"
 load_dotenv(ENV_PATH)
-
-logfire.configure()
-logfire.instrument_pydantic_ai()
 
 # --- Load system prompt ---
 PROMPT_PATH = Path(__file__).parent / "prompt.md"
@@ -43,7 +39,7 @@ cerebras_model = OpenAIChatModel(
 PROVIDER_CONFIG = {
     "mercury": {"model": mercury_model, "label": "Inception Mercury 2", "key_env": "INCEPTION_API_KEY"},
     "cerebras": {"model": cerebras_model, "label": "Cerebras", "key_env": "CEREBRAS_API_KEY"},
-    "pydantic": {"model": "openai:gpt-4o", "label": "Pydantic (GPT-4o)", "key_env": "LOGFIRE_TOKEN"},
+    "pydantic": {"model": "gateway/anthropic:claude-sonnet-4-6", "label": "Pydantic Gateway (Claude Sonnet)", "key_env": "PYDANTIC_AI_GATEWAY_API_KEY"},
 }
 
 agents: dict[str, Agent] = {}
@@ -167,7 +163,7 @@ async def generate(req: GenerateRequest):
     usage = {
         "prompt_tokens": usage_data.input_tokens,
         "completion_tokens": usage_data.output_tokens,
-        "total_tokens": usage_data.total_tokens(),
+        "total_tokens": usage_data.total_tokens,
     }
 
     tokens_per_second = None
