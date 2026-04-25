@@ -18,6 +18,7 @@ export default function CadPanel() {
   const [prompt, setPrompt] = useState("");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [compiling, setCompiling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [meta, setMeta] = useState<{
@@ -32,50 +33,47 @@ export default function CadPanel() {
   const cameraRef = useRef<any>(null);
   const frameRef = useRef<number>(0);
   const THREERef = useRef<any>(null);
+  const workerRef = useRef<Worker | null>(null);
   const codeRef = useRef(code);
   codeRef.current = code;
+  const compiledCodeRef = useRef<string>("");
 
-  // Mouse orbit state
+  // Camera orbit state
+  // rotY = azimuth (horizontal rotation), rotX = elevation (vertical tilt)
+  // OpenSCAD default view: looking from front-right, slightly above
   const orbitRef = useRef({
     isDown: false,
+    rightDown: false,
     startX: 0,
     startY: 0,
-    rotX: -0.4,
-    rotY: 0.6,
+    rotX: 0.6,        // ~35 deg elevation (looking down)
+    rotY: -0.8,        // ~45 deg azimuth (front-right)
     dist: 100,
-    panX: 0,
-    panY: 0,
+    targetX: 0,
+    targetY: 0,
+    targetZ: 0,
   });
+  const keysRef = useRef<Set<string>>(new Set());
 
   function log(msg: string) {
     console.log(`[CadPanel] ${msg}`);
     setDebugLog(prev => [...prev.slice(-9), msg]);
   }
 
+  // --- Three.js setup ---
   async function ensureThree() {
-    if (THREERef.current && rendererRef.current && sceneRef.current) {
-      return true;
-    }
+    if (THREERef.current && rendererRef.current && sceneRef.current) return true;
 
     const container = canvasContainerRef.current;
-    if (!container) {
-      log("ERROR: canvas container ref is null");
-      return false;
-    }
+    if (!container) { log("ERROR: container ref null"); return false; }
 
     const rect = container.getBoundingClientRect();
-    log(`Container size: ${Math.round(rect.width)}x${Math.round(rect.height)}`);
-
-    if (rect.width === 0 || rect.height === 0) {
-      log("ERROR: container has zero dimensions");
-      return false;
-    }
+    if (rect.width === 0 || rect.height === 0) { log(`ERROR: container ${rect.width}x${rect.height}`); return false; }
 
     try {
       const THREE = await import("three");
       THREERef.current = THREE;
 
-      // Create canvas element
       const canvas = document.createElement("canvas");
       container.innerHTML = "";
       container.appendChild(canvas);
@@ -93,12 +91,11 @@ export default function CadPanel() {
       const camera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 10000);
       cameraRef.current = camera;
 
-      // Lights
-      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
       const dir1 = new THREE.DirectionalLight(0xffffff, 0.8);
       dir1.position.set(5, 10, 7);
       scene.add(dir1);
-      const dir2 = new THREE.DirectionalLight(0xffffff, 0.3);
+      const dir2 = new THREE.DirectionalLight(0xffffff, 0.4);
       dir2.position.set(-5, -3, -5);
       scene.add(dir2);
 
@@ -107,118 +104,291 @@ export default function CadPanel() {
       grid.rotation.x = Math.PI / 2;
       scene.add(grid);
 
-      // Animation loop
       function animate() {
         frameRef.current = requestAnimationFrame(animate);
         const o = orbitRef.current;
+
+        // WASD/QE keyboard movement
+        const keys = keysRef.current;
+        const moveSpeed = o.dist * 0.015;
+        const rotSpeed = 0.03;
+        // Forward/back direction on the XY plane based on azimuth
+        const fwdX = -Math.sin(o.rotY);
+        const fwdY = Math.cos(o.rotY);
+        // Right direction
+        const rightX = Math.cos(o.rotY);
+        const rightY = Math.sin(o.rotY);
+
+        if (keys.has("w")) { o.targetX += fwdX * moveSpeed; o.targetY += fwdY * moveSpeed; }
+        if (keys.has("s")) { o.targetX -= fwdX * moveSpeed; o.targetY -= fwdY * moveSpeed; }
+        if (keys.has("a")) { o.targetX -= rightX * moveSpeed; o.targetY -= rightY * moveSpeed; }
+        if (keys.has("d")) { o.targetX += rightX * moveSpeed; o.targetY += rightY * moveSpeed; }
+        if (keys.has("q")) { o.targetZ -= moveSpeed; }
+        if (keys.has("e")) { o.targetZ += moveSpeed; }
+        if (keys.has("arrowleft"))  { o.rotY -= rotSpeed; }
+        if (keys.has("arrowright")) { o.rotY += rotSpeed; }
+        if (keys.has("arrowup"))    { o.rotX = Math.min(Math.PI / 2 - 0.01, o.rotX + rotSpeed); }
+        if (keys.has("arrowdown"))  { o.rotX = Math.max(-Math.PI / 2 + 0.01, o.rotX - rotSpeed); }
+
+        // Spherical coordinates around target — Z is up (OpenSCAD convention)
         camera.position.set(
-          o.panX + o.dist * Math.sin(o.rotY) * Math.cos(o.rotX),
-          o.panY + o.dist * Math.sin(o.rotX),
-          o.dist * Math.cos(o.rotY) * Math.cos(o.rotX)
+          o.targetX + o.dist * Math.cos(o.rotX) * Math.sin(o.rotY),
+          o.targetY - o.dist * Math.cos(o.rotX) * Math.cos(o.rotY),
+          o.targetZ + o.dist * Math.sin(o.rotX)
         );
-        camera.lookAt(new THREE.Vector3(o.panX, o.panY, 0));
+        camera.up.set(0, 0, 1);
+        camera.lookAt(new THREE.Vector3(o.targetX, o.targetY, o.targetZ));
         renderer.render(scene, camera);
       }
       animate();
 
-      log(`Three.js initialized OK. GL context: ${!!renderer.getContext()}`);
+      log(`Three.js OK (${Math.round(rect.width)}x${Math.round(rect.height)})`);
       return true;
     } catch (e: any) {
-      log(`ERROR initializing Three.js: ${e.message}`);
+      log(`Three.js init error: ${e.message}`);
       return false;
     }
   }
 
-  function addTestCube() {
-    const THREE = THREERef.current;
-    const scene = sceneRef.current;
-    if (!THREE || !scene) return;
-    const geom = new THREE.BoxGeometry(20, 20, 20);
-    const mat = new THREE.MeshPhongMaterial({ color: 0x4285f4 });
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.position.set(10, 10, 10);
-    scene.add(mesh);
-    orbitRef.current.dist = 80;
-    orbitRef.current.panX = 10;
-    orbitRef.current.panY = 10;
-    log("TEST CUBE added at (10,10,10) size 20");
+  // --- WASM Worker ---
+  function getWorker() {
+    if (!workerRef.current) {
+      workerRef.current = new Worker("/openscad-worker.js", { type: "module" });
+    }
+    return workerRef.current;
   }
 
-  function renderOpenSCAD(scadCode: string) {
-    const THREE = THREERef.current;
-    const scene = sceneRef.current;
-    if (!THREE || !scene) {
-      log("renderOpenSCAD: THREE or scene missing");
+  function compileAndRender(scadCode: string) {
+    if (compiledCodeRef.current === scadCode) {
+      log("Code unchanged, skipping recompile");
       return;
     }
 
-    // Remove old meshes (keep lights and grid)
+    setCompiling(true);
+    log("Sending to OpenSCAD WASM compiler...");
+
+    const worker = getWorker();
+    const id = Date.now();
+
+    const handler = (e: MessageEvent) => {
+      if (e.data.id !== undefined && e.data.id !== id) return;
+
+      switch (e.data.type) {
+        case "status":
+          log(e.data.text);
+          break;
+        case "stderr":
+          if (e.data.text && !e.data.text.startsWith("Compiling")) {
+            log(`stderr: ${e.data.text}`);
+          }
+          break;
+        case "result": {
+          worker.removeEventListener("message", handler);
+          setCompiling(false);
+          compiledCodeRef.current = scadCode;
+          if (e.data.format === "stl" && e.data.stl) {
+            log("Compilation done (STL) — loading mesh...");
+            loadSTL(e.data.stl);
+          } else if (e.data.off) {
+            const preview = e.data.off.substring(0, 100).replace(/\n/g, " ");
+            log(`Compilation done (OFF, ${e.data.off.length} chars) — ${preview}`);
+            loadOFF(e.data.off);
+          } else {
+            log("Compile returned but no mesh data");
+          }
+          break;
+        }
+        case "error": {
+          worker.removeEventListener("message", handler);
+          setCompiling(false);
+          log(`Compile error: ${e.data.text}`);
+          break;
+        }
+      }
+    };
+
+    worker.addEventListener("message", handler);
+    worker.postMessage({ code: scadCode, id });
+  }
+
+  function loadSTL(buffer: ArrayBuffer) {
+    const THREE = THREERef.current;
+    const scene = sceneRef.current;
+    if (!THREE || !scene) return;
+
     const toRemove: any[] = [];
     scene.traverse((child: any) => { if (child.isMesh) toRemove.push(child); });
-    log(`Removing ${toRemove.length} old mesh(es)`);
-    toRemove.forEach((m: any) => { scene.remove(m); m.geometry?.dispose(); });
+    toRemove.forEach((m: any) => { scene.remove(m); m.geometry?.dispose(); m.material?.dispose(); });
 
-    // Log first 200 chars of code for debugging
-    log(`Code starts with: ${scadCode.substring(0, 200).replace(/\n/g, " ")}`);
+    const dv = new DataView(buffer);
+    const numTriangles = dv.getUint32(80, true);
+    const positions = new Float32Array(numTriangles * 9);
+    let offset = 84;
+    for (let i = 0; i < numTriangles; i++) {
+      offset += 12;
+      for (let v = 0; v < 9; v++) { positions[i * 9 + v] = dv.getFloat32(offset, true); offset += 4; }
+      offset += 2;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshPhongMaterial({ color: 0xf9d72c, shininess: 50, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+
+    const box = new THREE.Box3().setFromObject(mesh);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    orbitRef.current.dist = Math.max(size.x, size.y, size.z) * 2.2;
+    orbitRef.current.targetX = center.x;
+    orbitRef.current.targetY = center.y;
+    orbitRef.current.targetZ = center.z;
+    orbitRef.current.rotX = 0.6;
+    orbitRef.current.rotY = -0.8;
+    log(`STL: ${numTriangles} triangles, size ${size.x.toFixed(1)}x${size.y.toFixed(1)}x${size.z.toFixed(1)}`);
+  }
+
+  function loadOFF(offText: string) {
+    const THREE = THREERef.current;
+    const scene = sceneRef.current;
+    if (!THREE || !scene) { log("loadOFF: THREE/scene missing"); return; }
+
+    // Remove old meshes
+    const toRemove: any[] = [];
+    scene.traverse((child: any) => { if (child.isMesh) toRemove.push(child); });
+    toRemove.forEach((m: any) => { scene.remove(m); m.geometry?.dispose(); if (m.material) { if (Array.isArray(m.material)) m.material.forEach((mt: any) => mt.dispose()); else m.material.dispose(); } });
 
     try {
-      colorIdx = 0;
-      const ast = scadParse(scadCode);
-      log(`Parsed AST: ${ast.length} top-level node(s): [${ast.map((n: any) => n?.op || "null").join(", ")}]`);
+      const { positions, colors, hasColors } = parseOFF(offText);
 
-      if (ast.length === 0) {
-        log("WARNING: Parser produced empty AST. Adding test cube instead.");
-        addTestCube();
-        return;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      if (hasColors) {
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
       }
+      geometry.computeVertexNormals();
 
-      const meshes = scadRender(THREE, ast, new THREE.Matrix4(), null, "add");
-      log(`Rendered ${meshes.length} mesh(es)`);
+      const material = new THREE.MeshPhongMaterial({
+        vertexColors: hasColors,
+        color: hasColors ? 0xffffff : 0xf9d72c,
+        shininess: 50,
+        side: THREE.DoubleSide,
+      });
 
-      if (meshes.length === 0) {
-        log("WARNING: Renderer produced 0 meshes from AST. Adding test cube.");
-        addTestCube();
-        return;
-      }
-
-      meshes.forEach((m: any) => scene.add(m));
+      const mesh = new THREE.Mesh(geometry, material);
+      scene.add(mesh);
 
       // Auto-fit camera
-      const box = new THREE.Box3();
-      scene.traverse((c: any) => { if (c.isMesh) box.expandByObject(c); });
-      if (!box.isEmpty()) {
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-        orbitRef.current.dist = Math.max(size.x, size.y, size.z) * 2.5;
-        orbitRef.current.panX = center.x;
-        orbitRef.current.panY = center.y;
-        log(`Camera: center=(${center.x.toFixed(1)},${center.y.toFixed(1)},${center.z.toFixed(1)}) dist=${orbitRef.current.dist.toFixed(1)}`);
-      } else {
-        log("WARNING: bounding box empty after adding meshes");
-      }
+      const box = new THREE.Box3().setFromObject(mesh);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      orbitRef.current.dist = Math.max(size.x, size.y, size.z) * 2.2;
+      orbitRef.current.targetX = center.x;
+      orbitRef.current.targetY = center.y;
+      orbitRef.current.targetZ = center.z;
+      orbitRef.current.rotX = 0.6;
+      orbitRef.current.rotY = -0.8;
+
+      const triCount = positions.length / 9;
+      log(`Loaded: ${triCount} triangles, ${hasColors ? "with colors" : "no colors"}, size ${size.x.toFixed(1)}x${size.y.toFixed(1)}x${size.z.toFixed(1)}`);
     } catch (e: any) {
-      log(`Parse/render ERROR: ${e.message}`);
-      console.error("OpenSCAD full error:", e);
-      // Still show test cube so we know Three.js works
-      addTestCube();
+      log(`OFF parse error: ${e.message}`);
+      console.error("OFF parse error:", e);
     }
   }
 
-  // When user switches to preview tab, init three + render
+  // --- OFF format parser (supports per-face colors) ---
+  function parseOFF(text: string) {
+    const lines = text.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+
+    let idx = 0;
+    // Handle header — could be "OFF" alone or "OFF 46247 92742 0" on same line
+    const headerMatch = lines[idx].match(/^(C?N?OFF)\s*(.*)/i);
+    let numVerts: number, numFaces: number;
+    if (headerMatch) {
+      const rest = headerMatch[2].trim();
+      idx++;
+      if (rest) {
+        // Counts on same line as OFF header
+        const counts = rest.split(/\s+/).map(Number);
+        numVerts = counts[0];
+        numFaces = counts[1];
+      } else {
+        // Counts on next line
+        const counts = lines[idx++].split(/\s+/).map(Number);
+        numVerts = counts[0];
+        numFaces = counts[1];
+      }
+    } else {
+      // No header — first line is counts
+      const counts = lines[idx++].split(/\s+/).map(Number);
+      numVerts = counts[0];
+      numFaces = counts[1];
+    }
+
+    // Read vertices
+    const verts: number[][] = [];
+    for (let i = 0; i < numVerts; i++) {
+      const parts = lines[idx++].split(/\s+/).map(Number);
+      verts.push([parts[0], parts[1], parts[2]]);
+    }
+
+    // Read faces — triangulate and extract colors
+    const positions: number[] = [];
+    const colors: number[] = [];
+    let hasColors = false;
+
+    for (let i = 0; i < numFaces; i++) {
+      if (idx >= lines.length) break;
+      const parts = lines[idx++].split(/\s+/).map(Number);
+      const n = parts[0]; // number of vertices in this face
+      const faceVerts = parts.slice(1, 1 + n);
+
+      // Colors come after vertex indices
+      let r = 0.98, g = 0.84, b = 0.17; // default OpenSCAD yellow
+      const colorStart = 1 + n;
+      if (parts.length > colorStart + 2) {
+        hasColors = true;
+        // Colors can be 0-1 floats or 0-255 ints
+        let cr = parts[colorStart], cg = parts[colorStart + 1], cb = parts[colorStart + 2];
+        if (cr > 1 || cg > 1 || cb > 1) { cr /= 255; cg /= 255; cb /= 255; }
+        r = cr; g = cg; b = cb;
+      }
+
+      // Triangulate (fan from first vertex)
+      for (let j = 1; j < n - 1; j++) {
+        const v0 = verts[faceVerts[0]];
+        const v1 = verts[faceVerts[j]];
+        const v2 = verts[faceVerts[j + 1]];
+        if (!v0 || !v1 || !v2) continue;
+
+        positions.push(v0[0], v0[1], v0[2]);
+        positions.push(v1[0], v1[1], v1[2]);
+        positions.push(v2[0], v2[1], v2[2]);
+
+        // Same color for all 3 vertices of this triangle
+        colors.push(r, g, b);
+        colors.push(r, g, b);
+        colors.push(r, g, b);
+      }
+    }
+
+    return {
+      positions: new Float32Array(positions),
+      colors: new Float32Array(colors),
+      hasColors,
+    };
+  }
+
+  // --- Preview tab effect ---
   useEffect(() => {
     if (tab !== "preview") return;
 
-    log("Preview tab activated — initializing...");
-
-    // Use a small timeout to ensure DOM is laid out
     const timer = setTimeout(async () => {
       const ready = await ensureThree();
-      if (!ready) {
-        log("Three.js init failed — cannot show preview");
-        return;
-      }
+      if (!ready) return;
 
-      // Resize to actual visible dimensions
+      // Resize
       const container = canvasContainerRef.current;
       if (container && rendererRef.current && cameraRef.current) {
         const rect = container.getBoundingClientRect();
@@ -226,18 +396,14 @@ export default function CadPanel() {
           rendererRef.current.setSize(rect.width, rect.height);
           cameraRef.current.aspect = rect.width / rect.height;
           cameraRef.current.updateProjectionMatrix();
-          log(`Resized to ${Math.round(rect.width)}x${Math.round(rect.height)}`);
-        } else {
-          log(`WARNING: container size is ${rect.width}x${rect.height}`);
         }
       }
 
       const currentCode = codeRef.current;
       if (currentCode) {
-        log(`Rendering ${currentCode.length} chars of OpenSCAD code...`);
-        renderOpenSCAD(currentCode);
+        compileAndRender(currentCode);
       } else {
-        log("No code to render yet — generate something first");
+        log("No code yet — paste or generate some");
       }
     }, 100);
 
@@ -245,7 +411,7 @@ export default function CadPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, code]);
 
-  // Handle window resize
+  // Resize on window resize
   useEffect(() => {
     function onResize() {
       if (tab !== "preview") return;
@@ -261,35 +427,74 @@ export default function CadPanel() {
     return () => window.removeEventListener("resize", onResize);
   }, [tab]);
 
-  // Mouse controls
+  // Cleanup worker on unmount
+  useEffect(() => {
+    return () => { workerRef.current?.terminate(); };
+  }, []);
+
+  // --- Mouse controls ---
   function onMouseDown(e: React.MouseEvent) {
-    orbitRef.current.isDown = true;
-    orbitRef.current.startX = e.clientX;
-    orbitRef.current.startY = e.clientY;
+    e.preventDefault();
+    const o = orbitRef.current;
+    o.startX = e.clientX;
+    o.startY = e.clientY;
+    if (e.button === 2 || e.shiftKey) {
+      o.rightDown = true;
+    } else {
+      o.isDown = true;
+    }
   }
   function onMouseMove(e: React.MouseEvent) {
-    if (!orbitRef.current.isDown) return;
-    const dx = e.clientX - orbitRef.current.startX;
-    const dy = e.clientY - orbitRef.current.startY;
-    if (e.shiftKey) {
-      orbitRef.current.panX -= dx * 0.3;
-      orbitRef.current.panY += dy * 0.3;
+    const o = orbitRef.current;
+    if (!o.isDown && !o.rightDown) return;
+    const dx = e.clientX - o.startX;
+    const dy = e.clientY - o.startY;
+    if (o.rightDown) {
+      // Pan: move target in screen-space
+      const panScale = o.dist * 0.002;
+      const rightX = Math.cos(o.rotY);
+      const rightY = Math.sin(o.rotY);
+      o.targetX -= dx * panScale * rightX;
+      o.targetY -= dx * panScale * rightY;
+      o.targetZ += dy * panScale;
     } else {
-      orbitRef.current.rotY += dx * 0.005;
-      orbitRef.current.rotX -= dy * 0.005;
-      orbitRef.current.rotX = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, orbitRef.current.rotX));
+      // Orbit
+      o.rotY += dx * 0.005;
+      o.rotX += dy * 0.005;
+      o.rotX = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, o.rotX));
     }
-    orbitRef.current.startX = e.clientX;
-    orbitRef.current.startY = e.clientY;
+    o.startX = e.clientX;
+    o.startY = e.clientY;
   }
-  function onMouseUp() {
-    orbitRef.current.isDown = false;
-  }
+  function onMouseUp() { orbitRef.current.isDown = false; orbitRef.current.rightDown = false; }
+  function onContextMenu(e: React.MouseEvent) { e.preventDefault(); }
   function onWheel(e: React.WheelEvent) {
-    orbitRef.current.dist = Math.max(5, orbitRef.current.dist * (1 + e.deltaY * 0.001));
+    orbitRef.current.dist = Math.max(1, orbitRef.current.dist * (1 + e.deltaY * 0.001));
   }
 
-  // Generate
+  // --- Keyboard controls (WASD + QE + Arrows) ---
+  useEffect(() => {
+    if (tab !== "preview") return;
+    function onKeyDown(e: KeyboardEvent) {
+      const key = e.key.toLowerCase();
+      if (["w", "a", "s", "d", "q", "e", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
+        e.preventDefault();
+        keysRef.current.add(key);
+      }
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      keysRef.current.delete(e.key.toLowerCase());
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      keysRef.current.clear();
+    };
+  }, [tab]);
+
+  // --- Generate via API ---
   async function handleGenerate() {
     if (!prompt.trim() || loading) return;
     setLoading(true);
@@ -317,6 +522,7 @@ export default function CadPanel() {
         latency_ms: data.latency_ms,
         tokens_per_second: data.tokens_per_second,
       });
+      compiledCodeRef.current = ""; // force recompile
       setTab("code");
     } catch (e: any) {
       setError(e.message);
@@ -347,7 +553,7 @@ export default function CadPanel() {
           OpenSCAD Code
         </button>
         <button
-          onClick={() => setTab("preview")}
+          onClick={() => { compiledCodeRef.current = ""; setTab("preview"); }}
           className={`px-4 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
             tab === "preview"
               ? "text-white border-b-2 border-violet-500"
@@ -365,55 +571,70 @@ export default function CadPanel() {
         )}
       </div>
 
-      {/* Content area */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      {/* Content area — both tabs always mounted, toggled via CSS */}
+      <div className="flex-1 min-h-0 overflow-hidden relative">
         {/* Code tab — editable */}
-        {tab === "code" && (
-          <div className="h-full flex flex-col overflow-hidden">
-            <textarea
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="Paste OpenSCAD code here or generate with a prompt below..."
-              spellCheck={false}
-              className="flex-1 w-full bg-transparent p-4 text-xs font-mono text-zinc-300 leading-relaxed resize-none focus:outline-none placeholder-zinc-600"
-            />
-            {code && (
-              <div className="flex-shrink-0 border-t border-zinc-700/50 px-4 py-2 flex justify-end">
-                <button
-                  onClick={() => setTab("preview")}
-                  className="text-xs px-3 py-1.5 bg-violet-600 text-white rounded-md hover:bg-violet-700 transition-colors"
-                >
-                  Preview
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+        <div className={`absolute inset-0 flex flex-col overflow-hidden ${tab === "code" ? "" : "invisible pointer-events-none"}`}>
+          <textarea
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="Paste OpenSCAD code here or generate with a prompt below..."
+            spellCheck={false}
+            className="flex-1 w-full bg-transparent p-4 text-xs font-mono text-zinc-300 leading-relaxed resize-none focus:outline-none placeholder-zinc-600"
+          />
+          {code && (
+            <div className="flex-shrink-0 border-t border-zinc-700/50 px-4 py-2 flex justify-end">
+              <button
+                onClick={() => { compiledCodeRef.current = ""; setTab("preview"); }}
+                className="text-xs px-3 py-1.5 bg-violet-600 text-white rounded-md hover:bg-violet-700 transition-colors"
+              >
+                Preview
+              </button>
+            </div>
+          )}
+        </div>
 
-        {/* 3D Preview tab */}
-        {tab === "preview" && (
-          <div
-            className="h-full w-full relative"
-            onMouseDown={onMouseDown}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseUp}
-            onWheel={onWheel}
-          >
-            <div ref={canvasContainerRef} className="absolute inset-0" />
-            {/* Debug overlay */}
+        {/* 3D Preview tab — always mounted so canvas/scene persist */}
+        <div
+          className={`absolute inset-0 outline-none ${tab === "preview" ? "" : "invisible pointer-events-none"}`}
+          tabIndex={0}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
+          onContextMenu={onContextMenu}
+          onWheel={onWheel}
+        >
+          <div ref={canvasContainerRef} className="absolute inset-0" />
+
+          {/* Compiling spinner */}
+          {compiling && (
+            <div className="absolute inset-0 flex items-center justify-center bg-white/60 pointer-events-none">
+              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg shadow text-sm text-gray-700">
+                <svg className="animate-spin h-4 w-4 text-violet-600" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Compiling with OpenSCAD WASM...
+              </div>
+            </div>
+          )}
+
+          {/* Debug log */}
+          {tab === "preview" && (
             <div className="absolute bottom-2 left-2 text-[10px] text-gray-600 bg-white/90 px-2 py-1 rounded pointer-events-none font-mono max-w-[80%]">
               {debugLog.length === 0 ? "Initializing..." : debugLog.map((line, i) => (
                 <div key={i}>{line}</div>
               ))}
             </div>
-            {!code && (
-              <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm pointer-events-none">
-                Generate code first to see 3D preview
-              </div>
-            )}
-          </div>
-        )}
+          )}
+
+          {!code && tab === "preview" && (
+            <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm pointer-events-none">
+              Generate or paste code first
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Error */}
@@ -440,12 +661,10 @@ export default function CadPanel() {
             className="px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors self-end"
           >
             {loading ? (
-              <span className="flex items-center gap-1.5">
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              </span>
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
             ) : (
               "Generate"
             )}
@@ -454,621 +673,4 @@ export default function CadPanel() {
       </div>
     </div>
   );
-}
-
-// ============================================================
-// OpenSCAD Tokenizer
-// ============================================================
-function scadTokenize(code: string) {
-  code = code.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-  const tokens: { t: string; v: any }[] = [];
-  const re = /("(?:[^"\\]|\\.)*")|(\d+\.?\d*(?:e[+-]?\d+)?)|([a-zA-Z_$]\w*)|([{}()\[\];,=+\-*/%<>!&|?:])/g;
-  let m;
-  while ((m = re.exec(code)) !== null) {
-    if (m[1]) tokens.push({ t: "str", v: m[1].slice(1, -1) });
-    else if (m[2]) tokens.push({ t: "num", v: parseFloat(m[2]) });
-    else if (m[3]) tokens.push({ t: "id", v: m[3] });
-    else if (m[4]) tokens.push({ t: "sym", v: m[4] });
-  }
-  return tokens;
-}
-
-// ============================================================
-// OpenSCAD Parser: tokens -> AST
-// ============================================================
-function scadParse(code: string) {
-  const tokens = scadTokenize(code);
-  let pos = 0;
-  const peek = () => tokens[pos] || null;
-  const next = () => tokens[pos++] || null;
-  const expect = (t: string, v?: any) => {
-    const tk = next();
-    if (!tk || tk.t !== t || (v !== undefined && tk.v !== v))
-      throw new Error(`Expected ${t}:${v} got ${tk?.t}:${tk?.v}`);
-    return tk;
-  };
-  const at = (t: string, v?: any) => {
-    const tk = peek();
-    return tk && tk.t === t && (v === undefined || tk.v === v);
-  };
-
-  const vars: Record<string, any> = {};
-  const modules: Record<string, any[]> = {};
-
-  function parseExpr(): any {
-    return parseTernary();
-  }
-
-  function parseTernary(): any {
-    const cond = parseComparison();
-    if (at("sym", "?")) {
-      next();
-      const a = parseExpr();
-      expect("sym", ":");
-      const b = parseExpr();
-      return cond ? a : b;
-    }
-    return cond;
-  }
-
-  function parseComparison(): any {
-    let left = parseAddSub();
-    while (at("sym", "<") || at("sym", ">") || at("sym", "=") || at("sym", "!")) {
-      const op1 = peek()!.v;
-      // Handle ==, !=, <=, >=
-      if (op1 === "=" && tokens[pos + 1]?.v === "=") {
-        next(); next();
-        const right = parseAddSub();
-        left = left === right ? 1 : 0;
-      } else if (op1 === "!" && tokens[pos + 1]?.v === "=") {
-        next(); next();
-        const right = parseAddSub();
-        left = left !== right ? 1 : 0;
-      } else if (op1 === "<" && tokens[pos + 1]?.v === "=") {
-        next(); next();
-        const right = parseAddSub();
-        left = left <= right ? 1 : 0;
-      } else if (op1 === ">" && tokens[pos + 1]?.v === "=") {
-        next(); next();
-        const right = parseAddSub();
-        left = left >= right ? 1 : 0;
-      } else if (op1 === "<") {
-        next();
-        const right = parseAddSub();
-        left = left < right ? 1 : 0;
-      } else if (op1 === ">") {
-        next();
-        const right = parseAddSub();
-        left = left > right ? 1 : 0;
-      } else {
-        break;
-      }
-    }
-    return left;
-  }
-
-  function parseAddSub(): any {
-    let left = parseMulDiv();
-    while (at("sym", "+") || at("sym", "-")) {
-      const op = next()!.v;
-      const right = parseMulDiv();
-      left = op === "+" ? left + right : left - right;
-    }
-    return left;
-  }
-
-  function parseMulDiv(): any {
-    let left = parseUnary();
-    while (at("sym", "*") || at("sym", "/") || at("sym", "%")) {
-      const op = next()!.v;
-      const right = parseUnary();
-      if (op === "*") left = left * right;
-      else if (op === "/") left = left / right;
-      else left = left % right;
-    }
-    return left;
-  }
-
-  function parseUnary(): any {
-    if (at("sym", "-")) { next(); return -parsePrimExpr(); }
-    if (at("sym", "+")) { next(); return parsePrimExpr(); }
-    if (at("sym", "!")) { next(); return parsePrimExpr() ? 0 : 1; }
-    return parsePrimExpr();
-  }
-
-  function parsePrimExpr(): any {
-    if (at("num")) return next()!.v;
-    if (at("str")) return next()!.v;
-    if (at("id", "true")) { next(); return 1; }
-    if (at("id", "false")) { next(); return 0; }
-    if (at("id", "undef")) { next(); return undefined; }
-    if (at("sym", "(")) { next(); const v = parseExpr(); expect("sym", ")"); return v; }
-    if (at("sym", "[")) return parseVector();
-    if (at("id")) {
-      const name = peek()!.v;
-      const mathFns: Record<string, Function> = {
-        sin: Math.sin, cos: Math.cos, tan: Math.tan, abs: Math.abs,
-        sqrt: Math.sqrt, round: Math.round, ceil: Math.ceil, floor: Math.floor,
-        min: Math.min, max: Math.max, pow: Math.pow, atan2: Math.atan2,
-        asin: (v: number) => Math.asin(v) * 180 / Math.PI,
-        acos: (v: number) => Math.acos(v) * 180 / Math.PI,
-        atan: (v: number) => Math.atan(v) * 180 / Math.PI,
-        len: (v: any) => Array.isArray(v) ? v.length : 0,
-        concat: (...args: any[]) => args.flat(),
-        str: (...args: any[]) => args.join(""),
-      };
-      if (mathFns[name]) {
-        next();
-        if (at("sym", "(")) {
-          next();
-          const args: any[] = [];
-          while (!at("sym", ")") && peek()) {
-            args.push(parseExpr());
-            if (at("sym", ",")) next();
-          }
-          if (at("sym", ")")) next();
-          if (["sin", "cos", "tan"].includes(name)) return mathFns[name](args[0] * Math.PI / 180);
-          return mathFns[name](...args);
-        }
-      }
-      if (vars[name] !== undefined) {
-        next();
-        // Array index: name[i]
-        if (at("sym", "[")) {
-          next();
-          const idx = parseExpr();
-          expect("sym", "]");
-          return Array.isArray(vars[name]) ? vars[name][idx] : 0;
-        }
-        return vars[name];
-      }
-      next(); return 0;
-    }
-    if (peek()) next();
-    return 0;
-  }
-
-  function parseVector(): any[] {
-    expect("sym", "[");
-
-    // List comprehension: [for (...) expr] — skip, return empty
-    if (at("id", "for") || at("id", "if") || at("id", "let") || at("id", "each")) {
-      let depth = 1;
-      while (depth > 0 && peek()) {
-        if (at("sym", "[")) depth++;
-        if (at("sym", "]")) { depth--; if (depth === 0) break; }
-        next();
-      }
-      if (at("sym", "]")) next();
-      return [];
-    }
-
-    const vals: any[] = [];
-    while (!at("sym", "]") && peek()) {
-      vals.push(parseExpr());
-      // Range expression: [start:end] or [start:step:end]
-      if (at("sym", ":")) {
-        const start = vals.pop() ?? 0;
-        next(); // skip ':'
-        const second = parseExpr();
-        if (at("sym", ":")) {
-          next(); // skip second ':'
-          const end = parseExpr();
-          // [start:step:end]
-          const step = second;
-          const range: number[] = [];
-          if (step > 0) { for (let i = start; i <= end; i += step) range.push(i); }
-          else if (step < 0) { for (let i = start; i >= end; i += step) range.push(i); }
-          vals.push(...range);
-        } else {
-          // [start:end] — step = 1
-          const range: number[] = [];
-          for (let i = start; i <= second; i++) range.push(i);
-          vals.push(...range);
-        }
-      }
-      if (at("sym", ",")) next();
-    }
-    if (at("sym", "]")) next();
-    return vals;
-  }
-
-  function parseNamedArgs() {
-    expect("sym", "(");
-    const named: Record<string, any> = {};
-    const positional: any[] = [];
-    while (!at("sym", ")") && peek()) {
-      if (at("id") && tokens[pos + 1]?.v === "=") {
-        const key = next()!.v;
-        next(); // skip '='
-        named[key] = parseExpr();
-      } else {
-        positional.push(parseExpr());
-      }
-      if (at("sym", ",")) next();
-    }
-    if (at("sym", ")")) next();
-    return { named, positional };
-  }
-
-  function parseChildren(): any[] {
-    if (at("sym", "{")) {
-      next();
-      const children: any[] = [];
-      while (!at("sym", "}") && peek()) {
-        try {
-          const stmts = parseStatement();
-          if (stmts) children.push(...(Array.isArray(stmts) ? stmts : [stmts]));
-        } catch (e) {
-          console.warn("[scadParse] Skipping in block:", (e as Error).message);
-          next();
-        }
-      }
-      if (at("sym", "}")) next();
-      return children;
-    } else {
-      try {
-        const s = parseStatement();
-        return s ? (Array.isArray(s) ? s : [s]) : [];
-      } catch (e) {
-        console.warn("[scadParse] Skipping child:", (e as Error).message);
-        next();
-        return [];
-      }
-    }
-  }
-
-  function parseStatement(): any {
-    if (!peek()) return null;
-    if (at("sym", ";")) { next(); return null; }
-
-    // Variable assignment
-    if (at("id") && tokens[pos + 1]?.v === "=" && tokens[pos + 1]?.t === "sym") {
-      // Check it's not ==
-      if (tokens[pos + 2]?.v !== "=") {
-        const name = next()!.v;
-        next();
-        vars[name] = parseExpr();
-        if (at("sym", ";")) next();
-        return null;
-      }
-    }
-
-    // Module definition
-    if (at("id", "module")) {
-      next();
-      const name = next()?.v || "anon";
-      if (at("sym", "(")) {
-        let depth = 1; next();
-        while (depth > 0 && peek()) {
-          if (at("sym", "(")) depth++;
-          if (at("sym", ")")) depth--;
-          next();
-        }
-      }
-      const startPos = pos;
-      if (at("sym", "{")) {
-        let depth = 1; next();
-        while (depth > 0 && peek()) {
-          if (peek()!.v === "{") depth++;
-          if (peek()!.v === "}") depth--;
-          if (depth > 0) next(); else { next(); break; }
-        }
-      }
-      modules[name] = tokens.slice(startPos, pos);
-      return null;
-    }
-
-    // function definition - skip
-    if (at("id", "function")) {
-      while (peek() && !at("sym", ";")) next();
-      if (at("sym", ";")) next();
-      return null;
-    }
-
-    // use/include - skip
-    if (at("id", "use") || at("id", "include")) {
-      while (peek() && !at("sym", ";") && !at("sym", ">")) next();
-      if (at("sym", ">")) next();
-      if (at("sym", ";")) next();
-      return null;
-    }
-
-    // for/if/let/each
-    if (at("id", "for") || at("id", "if") || at("id", "let") || at("id", "each")) {
-      next();
-      if (at("sym", "(")) {
-        let depth = 1; next();
-        while (depth > 0 && peek()) {
-          if (at("sym", "(")) depth++;
-          if (at("sym", ")")) depth--;
-          next();
-        }
-      }
-      return parseChildren();
-    }
-
-    // Modifier prefixes: !, *, #, %
-    if (at("sym", "!") || at("sym", "#") || at("sym", "%") || at("sym", "*")) {
-      next();
-      return parseStatement();
-    }
-
-    if (at("id")) {
-      const name = next()!.v;
-      const transforms = ["translate", "rotate", "scale", "mirror", "resize", "multmatrix"];
-      const csgOps = ["union", "difference", "intersection", "hull", "render", "minkowski"];
-      const primitives = ["cube", "cylinder", "sphere", "polyhedron"];
-
-      if (transforms.includes(name)) {
-        const args = parseNamedArgs();
-        const children = parseChildren();
-        return { op: name, args, children };
-      }
-
-      if (name === "color") {
-        const args = parseNamedArgs();
-        const children = parseChildren();
-        return { op: "color", args, children };
-      }
-
-      if (name === "linear_extrude") {
-        const args = parseNamedArgs();
-        const children = parseChildren();
-        return { op: "linear_extrude", args, children };
-      }
-
-      if (name === "rotate_extrude") {
-        const args = parseNamedArgs();
-        const children = parseChildren();
-        return { op: "rotate_extrude", args, children };
-      }
-
-      if (csgOps.includes(name)) {
-        if (at("sym", "(")) parseNamedArgs();
-        const children = parseChildren();
-        return { op: name, children };
-      }
-
-      if (primitives.includes(name)) {
-        const args = parseNamedArgs();
-        if (at("sym", ";")) next();
-        return { op: name, args };
-      }
-
-      // 2D primitives
-      if (name === "circle" || name === "square" || name === "polygon" || name === "text") {
-        const args = parseNamedArgs();
-        if (at("sym", ";")) next();
-        return { op: name, args };
-      }
-
-      // Module call
-      if (modules[name]) {
-        if (at("sym", "(")) parseNamedArgs();
-        if (at("sym", ";")) next();
-        else if (at("sym", "{")) parseChildren();
-        // Inline module body by re-parsing
-        const saved = { p: pos, t: [...tokens] };
-        const moduleTokens = [...modules[name]];
-        tokens.splice(pos, tokens.length - pos, ...moduleTokens);
-        const result = parseChildren();
-        tokens.splice(pos, tokens.length - pos, ...saved.t.slice(saved.p));
-        return result;
-      }
-
-      // Unknown identifier - skip
-      if (at("sym", "(")) parseNamedArgs();
-      if (at("sym", "{")) parseChildren();
-      if (at("sym", ";")) next();
-      return null;
-    }
-
-    next();
-    return null;
-  }
-
-  const ast: any[] = [];
-  while (peek()) {
-    try {
-      const s = parseStatement();
-      if (s) ast.push(...(Array.isArray(s) ? s : [s]));
-    } catch (e) {
-      // Skip problematic token and continue parsing
-      console.warn("[scadParse] Skipping token due to error:", (e as Error).message, "at pos", pos, "token:", peek());
-      next();
-    }
-  }
-  return ast;
-}
-
-// ============================================================
-// OpenSCAD Renderer: AST -> Three.js meshes
-// ============================================================
-const COLORS = [0x4285f4, 0x34a853, 0xfbbc04, 0xea4335, 0x9c27b0, 0x00bcd4];
-let colorIdx = 0;
-
-function scadRender(THREE: any, nodes: any[], parentMatrix: any, currentColor: number | null, csgMode: string): any[] {
-  if (!Array.isArray(nodes)) nodes = [nodes];
-  const meshes: any[] = [];
-
-  for (const node of nodes) {
-    if (!node || !node.op) continue;
-    const { op, args, children } = node;
-
-    switch (op) {
-      case "translate": {
-        const v = args?.positional?.[0] || args?.named?.v || [0, 0, 0];
-        const m = new THREE.Matrix4().makeTranslation(v[0] || 0, v[1] || 0, v[2] || 0);
-        const combined = parentMatrix.clone().multiply(m);
-        meshes.push(...scadRender(THREE, children || [], combined, currentColor, csgMode));
-        break;
-      }
-      case "rotate": {
-        const v = args?.positional?.[0] || [0, 0, 0];
-        const m = new THREE.Matrix4();
-        if (Array.isArray(v)) {
-          const rx = (v[0] || 0) * Math.PI / 180;
-          const ry = (v[1] || 0) * Math.PI / 180;
-          const rz = (v[2] || 0) * Math.PI / 180;
-          m.makeRotationZ(rz)
-            .multiply(new THREE.Matrix4().makeRotationY(ry))
-            .multiply(new THREE.Matrix4().makeRotationX(rx));
-        } else {
-          m.makeRotationZ(((typeof v === "number" ? v : 0) * Math.PI) / 180);
-        }
-        const combined = parentMatrix.clone().multiply(m);
-        meshes.push(...scadRender(THREE, children || [], combined, currentColor, csgMode));
-        break;
-      }
-      case "scale": {
-        const v = args?.positional?.[0] || [1, 1, 1];
-        let sx: number, sy: number, sz: number;
-        if (Array.isArray(v)) { sx = v[0] || 1; sy = v[1] || 1; sz = v[2] || 1; }
-        else { sx = sy = sz = typeof v === "number" ? v : 1; }
-        const m = new THREE.Matrix4().makeScale(sx, sy, sz);
-        const combined = parentMatrix.clone().multiply(m);
-        meshes.push(...scadRender(THREE, children || [], combined, currentColor, csgMode));
-        break;
-      }
-      case "mirror": {
-        const v = args?.positional?.[0] || [1, 0, 0];
-        const m = new THREE.Matrix4().makeScale(v[0] ? -1 : 1, v[1] ? -1 : 1, v[2] ? -1 : 1);
-        const combined = parentMatrix.clone().multiply(m);
-        meshes.push(...scadRender(THREE, children || [], combined, currentColor, csgMode));
-        break;
-      }
-      case "color": {
-        let col = null;
-        const cv = args?.positional?.[0] || args?.named?.c;
-        if (typeof cv === "string") {
-          col = new THREE.Color(cv);
-        } else if (Array.isArray(cv) && cv.length >= 3) {
-          col = new THREE.Color(cv[0], cv[1], cv[2]);
-        }
-        meshes.push(...scadRender(THREE, children || [], parentMatrix, col ? col.getHex() : currentColor, csgMode));
-        break;
-      }
-      case "union":
-      case "hull":
-      case "render":
-      case "minkowski": {
-        meshes.push(...scadRender(THREE, children || [], parentMatrix, currentColor, "add"));
-        break;
-      }
-      case "difference": {
-        if (children && children.length > 0) {
-          meshes.push(...scadRender(THREE, [children[0]], parentMatrix, currentColor, "add"));
-          for (let i = 1; i < children.length; i++) {
-            meshes.push(...scadRender(THREE, [children[i]], parentMatrix, currentColor, "subtract"));
-          }
-        }
-        break;
-      }
-      case "intersection": {
-        meshes.push(...scadRender(THREE, children || [], parentMatrix, currentColor, "add"));
-        break;
-      }
-      case "linear_extrude": {
-        const h = args?.named?.height || args?.positional?.[0] || 10;
-        const center = args?.named?.center;
-        if (children) {
-          for (const child of children) {
-            if (child?.op === "circle") {
-              const r = child.args?.named?.r || (child.args?.named?.d ? child.args.named.d / 2 : null) || child.args?.positional?.[0] || 5;
-              const geom = new THREE.CylinderGeometry(r, r, h, 48);
-              geom.rotateX(Math.PI / 2);
-              if (!center) geom.translate(0, 0, h / 2);
-              meshes.push(makeMesh(THREE, geom, parentMatrix, currentColor, csgMode));
-            } else if (child?.op === "square") {
-              const sv = child.args?.positional?.[0] || child.args?.named?.size || 10;
-              let sx: number, sy: number;
-              if (Array.isArray(sv)) { sx = sv[0]; sy = sv[1]; } else { sx = sy = sv; }
-              const cc = child.args?.named?.center;
-              const geom = new THREE.BoxGeometry(sx, sy, h);
-              if (!cc) geom.translate(sx / 2, sy / 2, 0);
-              if (!center) geom.translate(0, 0, h / 2);
-              meshes.push(makeMesh(THREE, geom, parentMatrix, currentColor, csgMode));
-            } else {
-              // Recurse — might be a transform wrapping a 2D shape
-              meshes.push(...scadRender(THREE, [child], parentMatrix, currentColor, csgMode));
-            }
-          }
-        }
-        break;
-      }
-      case "rotate_extrude": {
-        if (children) {
-          for (const child of children) {
-            if (child?.op === "circle") {
-              const r = child.args?.named?.r || (child.args?.named?.d ? child.args.named.d / 2 : null) || child.args?.positional?.[0] || 5;
-              const ringR = 10;
-              const geom = new THREE.TorusGeometry(ringR, r, 24, 48);
-              meshes.push(makeMesh(THREE, geom, parentMatrix, currentColor, csgMode));
-            }
-          }
-        }
-        break;
-      }
-      case "cube": {
-        const sv = args?.positional?.[0] || args?.named?.size || 10;
-        let x: number, y: number, z: number;
-        if (Array.isArray(sv)) { x = sv[0] || 1; y = sv[1] || 1; z = sv[2] || 1; }
-        else { x = y = z = typeof sv === "number" ? sv : 10; }
-        const center = args?.named?.center;
-        const geom = new THREE.BoxGeometry(x, y, z);
-        if (!center) geom.translate(x / 2, y / 2, z / 2);
-        meshes.push(makeMesh(THREE, geom, parentMatrix, currentColor, csgMode));
-        break;
-      }
-      case "cylinder": {
-        const n = args?.named || {};
-        const p = args?.positional || [];
-        const h = n.h ?? n.height ?? p[0] ?? 10;
-        let r1: number, r2: number;
-        if (n.r !== undefined) { r1 = r2 = n.r; }
-        else if (n.d !== undefined) { r1 = r2 = n.d / 2; }
-        else {
-          r1 = n.r1 ?? (n.d1 !== undefined ? n.d1 / 2 : p[1] ?? 5);
-          r2 = n.r2 ?? (n.d2 !== undefined ? n.d2 / 2 : p[2] ?? r1);
-        }
-        const center = n.center;
-        const segments = n["$fn"] || 48;
-        const geom = new THREE.CylinderGeometry(r2, r1, h, segments);
-        geom.rotateX(Math.PI / 2);
-        if (!center) geom.translate(0, 0, h / 2);
-        meshes.push(makeMesh(THREE, geom, parentMatrix, currentColor, csgMode));
-        break;
-      }
-      case "sphere": {
-        const n = args?.named || {};
-        const p = args?.positional || [];
-        const r = n.r ?? (n.d !== undefined ? n.d / 2 : null) ?? p[0] ?? 10;
-        const geom = new THREE.SphereGeometry(r, 32, 32);
-        meshes.push(makeMesh(THREE, geom, parentMatrix, currentColor, csgMode));
-        break;
-      }
-      default: {
-        if (children) meshes.push(...scadRender(THREE, children, parentMatrix, currentColor, csgMode));
-        break;
-      }
-    }
-  }
-  return meshes;
-}
-
-function makeMesh(THREE: any, geom: any, matrix: any, color: number | null, csgMode: string) {
-  const c = color ?? COLORS[colorIdx++ % COLORS.length];
-  const isSubtract = csgMode === "subtract";
-  const mat = new THREE.MeshPhongMaterial({
-    color: isSubtract ? 0xff4444 : c,
-    shininess: 60,
-    transparent: isSubtract,
-    opacity: isSubtract ? 0.15 : 1.0,
-    side: THREE.DoubleSide,
-    wireframe: isSubtract,
-  });
-  const mesh = new THREE.Mesh(geom, mat);
-  mesh.applyMatrix4(matrix);
-  return mesh;
 }

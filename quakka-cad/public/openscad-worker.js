@@ -1,65 +1,77 @@
-// Web Worker: compiles OpenSCAD code to binary STL using WASM
-let instance = null;
+// Web Worker (module): compiles OpenSCAD code using WASM
+// Creates a fresh WASM instance per compilation (callMain can only run once)
+let OpenSCADFactory = null;
 
-async function initOpenSCAD() {
-  if (instance) return instance;
-
-  // Load the Emscripten-generated JS module
-  importScripts("/wasm/openscad.js");
-
-  instance = await OpenSCAD({
-    noInitialRun: true,
-    locateFile: (path) => `/wasm/${path}`,
-    print: (text) => self.postMessage({ type: "stdout", text }),
-    printErr: (text) => self.postMessage({ type: "stderr", text }),
-  });
-
-  return instance;
+async function loadFactory() {
+  if (OpenSCADFactory) return OpenSCADFactory;
+  const mod = await import("/wasm/openscad.js");
+  OpenSCADFactory = mod.default;
+  return OpenSCADFactory;
 }
 
 self.onmessage = async (e) => {
   const { code, id } = e.data;
+  const stderrLines = [];
 
   try {
     self.postMessage({ type: "status", text: "Loading OpenSCAD WASM...", id });
-    const inst = await initOpenSCAD();
+    const factory = await loadFactory();
+
+    // Fresh instance each time (callMain can only be called once)
+    const instance = await factory({
+      noInitialRun: true,
+      locateFile: (path) => `/wasm/${path}`,
+      print: (text) => self.postMessage({ type: "stdout", text, id }),
+      printErr: (text) => {
+        stderrLines.push(text);
+        self.postMessage({ type: "stderr", text, id });
+      },
+    });
 
     // Write input file
-    inst.FS.writeFile("/input.scad", code);
+    instance.FS.writeFile("/input.scad", code);
 
     self.postMessage({ type: "status", text: "Compiling...", id });
 
-    // Run OpenSCAD — compile to binary STL
-    const exitCode = inst.callMain([
+    // Try OFF first (has colors), fall back to binstl
+    let format = "off";
+    let outFile = "/output.off";
+    let exitCode = instance.callMain([
       "/input.scad",
-      "-o", "/output.stl",
-      "--export-format=binstl",
+      "-o", outFile,
       "--backend=manifold",
     ]);
 
     if (exitCode !== 0) {
-      self.postMessage({ type: "error", text: `OpenSCAD exited with code ${exitCode}`, id });
+      // Send stderr as error detail
+      const errDetail = stderrLines.filter(l => l.includes("ERROR") || l.includes("error")).join("; ");
+      self.postMessage({ type: "error", text: errDetail || `OpenSCAD exited with code ${exitCode}`, id });
       return;
     }
 
-    // Read output STL
-    let stlData;
+    // Read output
+    let outputData;
     try {
-      stlData = inst.FS.readFile("/output.stl");
+      outputData = instance.FS.readFile(outFile, { encoding: "utf8" });
     } catch {
       self.postMessage({ type: "error", text: "No output generated — check your OpenSCAD code", id });
       return;
     }
 
-    // Transfer the buffer (zero-copy)
-    self.postMessage(
-      { type: "result", stl: stlData.buffer, id },
-      [stlData.buffer]
-    );
-
-    // Cleanup output file
-    try { inst.FS.unlink("/output.stl"); } catch {}
-    try { inst.FS.unlink("/input.scad"); } catch {}
+    // Check if it's actually valid OFF
+    if (typeof outputData === "string" && (outputData.startsWith("OFF") || outputData.startsWith("COFF"))) {
+      self.postMessage({ type: "result", off: outputData, format: "off", id });
+    } else {
+      // Fallback: try reading as binary STL
+      try {
+        const stlData = instance.FS.readFile(outFile);
+        const buf = stlData.buffer.slice(stlData.byteOffset, stlData.byteOffset + stlData.byteLength);
+        self.postMessage({ type: "result", stl: buf, format: "stl", id }, [buf]);
+      } catch {
+        // Send whatever we got as OFF anyway
+        self.postMessage({ type: "result", off: String(outputData), format: "off", id });
+      }
+    }
   } catch (err) {
     self.postMessage({ type: "error", text: err.message || String(err), id });
   }
