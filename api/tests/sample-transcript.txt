@@ -1,6 +1,22 @@
-[0.0s-4.2s] We need an enclosure for our Arduino Mega and a 3.7V LiPo battery pack.
-[4.5s-9.1s] The board footprint is 102mm by 54mm, that's the standard Mega size.
-[9.3s-13.8s] Let's lock in 5mm wall thickness — thick enough for the connectors.
-[14.0s-18.6s] We should add ventilation holes on the top face for heat dissipation.
-[19.0s-24.3s] We still haven't decided the battery dimensions — do we know the thickness?
-[24.6s-28.0s] No, the battery supplier hasn't confirmed spec yet. That's a blocker.
+[0.0s-8.5s] Alright, let's officially kick off the design review for Project Daedalus, our Level 2 high-power model rocket.
+[12.2s-19.8s] The primary objective is hitting exactly 5,000 feet on an aero-braked J-class motor and recovering it fully intact.
+[25.0s-32.4s] I'm proposing we use a 98-millimeter airframe made of wound carbon fiber to keep the dry mass under two kilograms.
+[35.1s-44.0s] Why carbon fiber, though? For a flight profile only reaching Mach 0.85, G10 fiberglass is more than sufficient and much cheaper.
+[45.5s-53.2s] Plus, carbon fiber blocks RF signals. If we use it, we have to engineer a fiberglass nosecone just to get GPS telemetry out. What if we just stick to an all-fiberglass build?
+[55.0s-61.5s] That's a fair point, the RF transparency makes things simpler. Let's pivot to thin-wall G10. It simplifies the avionics bay design significantly.
+[75.3s-82.1s] Moving to propulsion. The current simulation uses an Aerotech J350W.
+[84.5s-91.0s] I ran that motor through OpenRocket last night. With the heavier fiberglass airframe, our thrust-to-weight ratio off the rail is only 4:1.
+[92.2s-98.8s] That's entirely too sluggish. If we get a crosswind at ignition, we're going to weathercock severely before clearing the launch rod. 
+[102.5s-109.1s] What if we step up to a punchier motor? A J825R gives us a 9:1 ratio. It hits much harder but guarantees stability off the rail.
+[112.0s-117.5s] Good catch. We can't risk a low-and-slow rail exit. Switch the spec to the J825R. 
+[135.2s-143.8s] Now, about the recovery system. We're using standard dual-deployment. A drogue chute at apogee, and a 60-inch main deploying at 700 feet.
+[148.0s-156.5s] Are we trusting a single altimeter for deployment? What happens if the primary flight computer loses continuity to the black powder charges?
+[158.2s-165.9s] We'd come in ballistic and bury it. You're right, we need redundancy. Let's add a second, entirely isolated altimeter running on its own 9V battery.
+[180.4s-188.1s] Let's verify the fin geometry. We have four clipped-delta fins, 4 millimeters thick, mounted through the wall to the 38mm motor tube.
+[195.3s-204.0s] I'm concerned about aeroelastic flutter. At our projected top speed, a 4-millimeter fin with that root chord might experience divergence.
+[206.5s-214.2s] Have we calculated the exact flutter boundary velocity for that specific geometry? We shouldn't be guessing on structural limits here.
+[216.0s-225.5s] Not yet. I'll run the FinSim calculations tonight. If it's too close to our max velocity, we'll either need to thicken them to 6 millimeters or add a tip-to-tip fiberglass layer.
+[240.1s-249.8s] Okay, last major item is the center of gravity. Right now, fully loaded with the heavier J825R, we are sitting at 1.2 calibers of stability.
+[252.3s-259.0s] 1.2 is way too tight. If the motor's actual mass is slightly higher than the spec sheet, we risk going marginally unstable in flight.
+[262.5s-270.2s] Let's design a modular bulkhead in the nosecone to accept lead shot. We can add up to 150 grams of ballast to pull the CG forward and enforce a strict 2.0 calibers of stability.
+[285.0s-296.5s] Agreed. Let's lock in those changes: G10 airframe, J825R motor, redundant avionics, and nose ballast. I'll update the master CAD file and send it out for the team review.
