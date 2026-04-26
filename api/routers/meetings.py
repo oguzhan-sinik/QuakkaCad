@@ -12,8 +12,6 @@ from pydantic import BaseModel
 import logging
 
 from agents import (
-    classify_relevance_batch,
-    classify_relevance_heuristic,
     run_openscad_edit,
     run_openscad_fix,
     run_openscad_meeting,
@@ -93,7 +91,6 @@ def get_meeting_state(meeting_id: UUID):
 def add_transcript_entry(meeting_id: UUID, body: TranscriptEntryCreate):
     _get_meeting_or_404(meeting_id)
     entry = TranscriptEntry(**body.model_dump())
-    entry.is_design_relevant = classify_relevance_heuristic(entry.text)
     store.transcripts[meeting_id].append(entry)
     return entry
 
@@ -189,16 +186,6 @@ async def trigger_planner(
     prev_count = store.processed_counts.get(meeting_id, 0)
     new_entries = all_entries[prev_count:]
 
-    # Classify any ambiguous entries via LLM batch call
-    unclassified = [e for e in new_entries if e.is_design_relevant is None]
-    if unclassified:
-        results = await classify_relevance_batch(unclassified, provider=provider.value)
-        for entry, relevant in zip(unclassified, results):
-            entry.is_design_relevant = relevant
-
-    # Filter out off-topic lines (keep True and None as safety fallback)
-    new_entries = [e for e in new_entries if e.is_design_relevant is not False]
-
     if not new_entries:
         async def _empty():
             yield f"data: {json.dumps({'type': 'done', 'total_created': 0, 'total_updated': 0})}\n\n"
@@ -286,13 +273,13 @@ async def trigger_openscad(
     current_models = store.models[meeting_id]
     current_blocks = store.blocks[meeting_id]
     latest_model = current_models[-1] if current_models else None
-    relevant_transcript = [e for e in store.transcripts[meeting_id] if e.is_design_relevant is not False]
+    full_transcript = store.transcripts[meeting_id]
 
     try:
         if latest_model is None:
             # First generation — full synthesis
             iteration_create, meta = await run_openscad_meeting(
-                transcript=relevant_transcript,
+                transcript=full_transcript,
                 blocks=current_blocks,
                 provider=provider.value,
                 temperature=temperature,
@@ -317,7 +304,7 @@ async def trigger_openscad(
 
             if is_structural:
                 iteration_create, meta = await run_openscad_meeting(
-                    transcript=relevant_transcript,
+                    transcript=full_transcript,
                     blocks=current_blocks,
                     provider=provider.value,
                     temperature=temperature,

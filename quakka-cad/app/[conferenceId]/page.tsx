@@ -215,6 +215,8 @@ export default function ConferencePage() {
               return prev;
             });
             setPlanUpdatedForCad(true);
+            // Auto-trigger 3D update whenever the plan changes
+            handleRunOpenSCAD();
             // Exit immediately — don't wait for the stream to close naturally,
             // since Next.js dev may not propagate the backend's connection close.
             streamEnded = true;

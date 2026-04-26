@@ -109,7 +109,7 @@ def _get_relevance_agent(provider: str) -> Agent:
         cfg = PROVIDER_CONFIG[provider]
         _relevance_agents[provider] = Agent(
             cfg["model"],
-            system_prompt=RELEVANCE_CLASSIFIER_PROMPT,
+            system_prompt=_system_prompt(provider, RELEVANCE_CLASSIFIER_PROMPT),
             output_type=str,
             retries=1,
         )
@@ -192,6 +192,7 @@ Rules:
 - Only touch geometry when a decision or objective block explicitly changed the form factor
 - Each search string must match exactly one location in the script
 - Do not rewrite the whole file — only the minimum edits to reflect the changed blocks
+- Preserve existing color() calls unless a decision block explicitly changed part colours
 - reasoning must cite which blocks drove each edit
 - applied_lessons: list specific CAD heuristics or past compilation errors avoided\
 """
@@ -208,6 +209,7 @@ Rules:
 - The objective block defines the physical form (enclosure, bracket, housing, etc.)
 - decision blocks inform geometry choices (mounting holes, wall thickness, etc.)
 - missing_info blocks: substitute a sensible default and add a // TODO comment
+- Use color() to visually distinguish parts (e.g. body vs lid vs hardware)
 - reasoning must explain your geometric decisions
 - applied_lessons: list specific CAD heuristics or past compilation errors avoided\
 """
@@ -220,7 +222,7 @@ Output ONLY raw OpenSCAD — no markdown fences, no prose, no explanation.
 
 Rules:
 - Fix exactly what the ERROR: lines describe — do not change anything else
-- Preserve all variable names, comments, and structure outside the error sites
+- Preserve all variable names, comments, color() calls, and structure outside the error sites
 - If an error is ambiguous, choose the minimal fix that makes the script valid\
 """
 
@@ -238,6 +240,7 @@ Rules:
 - Declare ALL numeric parameters as named variables at the top of the file
 - Use union(), difference(), intersection() correctly — no syntax errors
 - Add // TODO comments for any missing_info blocks (substitute sensible defaults)
+- Use color() to visually distinguish major parts (e.g. body, lid, inserts)
 - reasoning must explain every significant geometric decision made
 - applied_lessons: note any CAD heuristics applied (e.g. tolerances, printability)\
 """
@@ -262,10 +265,11 @@ def _filter_openscad_stderr(stderr: str | None) -> str | None:
 
 PROVIDER_CONFIG: dict[str, dict] = {
     "groq": {
-        "model": "gateway/groq:openai/gpt-oss-120b",
+        "model": "gateway/groq:llama-3.3-70b-versatile",
         "model_name": "openai/gpt-oss-120b",
         "label": "Pydantic Gateway / Groq (GPT OSS 120B)",
         "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
+        "reasoning_effort": "high",  # gpt-oss-120b: low / medium / high
     },
     "anthropic": {
         "model": "gateway/anthropic:claude-opus-4-7",
@@ -339,12 +343,20 @@ def _require_key(provider: str) -> None:
         raise RuntimeError(f"{cfg['key_env']} is not set. Add it to api/.env")
 
 
+def _system_prompt(provider: str, base: str) -> str:
+    """Prepend reasoning effort instruction if the provider supports it."""
+    effort = PROVIDER_CONFIG[provider].get("reasoning_effort")
+    if effort:
+        return f"Reasoning: {effort}\n\n{base}"
+    return base
+
+
 def _get_generate_agent(provider: str) -> Agent:
     if provider not in _generate_agents:
         cfg = PROVIDER_CONFIG[provider]
         _generate_agents[provider] = Agent(
             cfg["model"],
-            system_prompt=GENERATE_SYSTEM_PROMPT,
+            system_prompt=_system_prompt(provider, GENERATE_SYSTEM_PROMPT),
             output_type=str,
             retries=1,
         )
@@ -356,7 +368,7 @@ def _get_planner_agent(provider: str) -> Agent:
         cfg = PROVIDER_CONFIG[provider]
         _planner_agents[provider] = Agent(
             cfg["model"],
-            system_prompt=PLANNER_SYSTEM_PROMPT,
+            system_prompt=_system_prompt(provider, PLANNER_SYSTEM_PROMPT),
             output_type=str,
             retries=1,
         )
@@ -368,7 +380,7 @@ def _get_openscad_meeting_agent(provider: str) -> Agent:
         cfg = PROVIDER_CONFIG[provider]
         _openscad_meeting_agents[provider] = Agent(
             cfg["model"],
-            system_prompt=OPENSCAD_MEETING_SYSTEM_PROMPT,
+            system_prompt=_system_prompt(provider, OPENSCAD_MEETING_SYSTEM_PROMPT),
             output_type=ModelIterationCreate,
             retries=1,
         )
@@ -380,7 +392,7 @@ def _get_openscad_edit_agent(provider: str) -> Agent:
         cfg = PROVIDER_CONFIG[provider]
         _openscad_edit_agents[provider] = Agent(
             cfg["model"],
-            system_prompt=OPENSCAD_EDIT_SYSTEM_PROMPT,
+            system_prompt=_system_prompt(provider, OPENSCAD_EDIT_SYSTEM_PROMPT),
             output_type=OpenSCADEditOutput,
             retries=1,
         )
@@ -392,7 +404,7 @@ def _get_openscad_fix_agent(provider: str) -> Agent:
         cfg = PROVIDER_CONFIG[provider]
         _openscad_fix_agents[provider] = Agent(
             cfg["model"],
-            system_prompt=OPENSCAD_FIX_SYSTEM_PROMPT,
+            system_prompt=_system_prompt(provider, OPENSCAD_FIX_SYSTEM_PROMPT),
             output_type=str,
             retries=1,
         )
@@ -404,7 +416,7 @@ def _get_refine_agent(provider: str) -> Agent:
         cfg = PROVIDER_CONFIG[provider]
         _refine_agents[provider] = Agent(
             cfg["model"],
-            system_prompt=OPENSCAD_REFINE_SYSTEM_PROMPT,
+            system_prompt=_system_prompt(provider, OPENSCAD_REFINE_SYSTEM_PROMPT),
             output_type=NativeOutput(ModelIterationCreate),
             retries=1,
         )
@@ -420,7 +432,7 @@ def _llm_block_to_content(b: LLMBlockCreate) -> AnyBlockContent:
     if b.block_type == "objective":
         return ObjectiveContent(
             goal_statement=b.goal_statement or "TBD",
-            success_criteria=b.success_criteria or [],
+            success_criteria=b.success_criteria or ["TBD"],
         )
     if b.block_type == "variable":
         return VariableContent(
