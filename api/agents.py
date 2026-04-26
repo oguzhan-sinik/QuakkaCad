@@ -171,14 +171,25 @@ Type-specific fields (include only the relevant ones):
 
 Block types and when to use them:
   objective    - physical build goal; populate success_criteria as a strict list
-  variable     - a numeric parameter (dimensions, voltages, weights); set is_locked=true
-                 ONLY when the team explicitly agreed on that exact value; use is_locked=false
-                 with a sensible default for any parameter that is estimated or typical for the object
-  decision     - a design choice; list rejected_alternatives explicitly mentioned
+  variable     - a NUMERIC parameter only (dimensions, voltages, weights, counts);
+                 "value" must be a plain number — never a colour name, material name, or text;
+                 set is_locked=true ONLY when the team explicitly agreed on that exact value;
+                 use is_locked=false with a sensible default for estimated or typical values
+  decision     - ANY non-numeric design choice: colour ("inner body is red"), material
+                 ("use aluminium"), finish, orientation, connector type, fastener style, etc.
+                 Write the full human-readable choice in "final_choice" (e.g. "Inner body
+                 colour: Red"); list rejected_alternatives explicitly mentioned by the team
   missing_info - ONLY use when a value is truly unresolvable (e.g. a custom PCB board whose
                  dimensions have never been mentioned and cannot be estimated); do NOT use for
                  things that have well-known typical dimensions or that the CAD agent can draft
                  with a reasonable default
+
+CRITICAL — colour/material routing:
+  "the inner body should be red"   → decision  {final_choice: "Inner body colour: Red"}
+  "wall thickness is 3mm"          → variable  {parameter_name: "wall_thickness", value: 3, unit: "mm"}
+  "use stainless steel"            → decision  {final_choice: "Material: Stainless steel"}
+  "12V supply"                     → variable  {parameter_name: "supply_voltage", value: 12, unit: "V"}
+  Never put a colour or material name in the "value" field of a variable block.
 
 Rules:
 - reasoning must be ≥ 10 chars and cite specific transcript evidence

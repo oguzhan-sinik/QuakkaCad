@@ -41,16 +41,10 @@ export default function ConferencePage() {
   const [feaData, setFeaData] = useState<FEAAnalysisData | null>(null);
   const [drawingLoading, setDrawingLoading] = useState(false);
   const [drawingData, setDrawingData] = useState<TechnicalDrawingData | null>(null);
-  const [cadQueryLoading, setCadQueryLoading] = useState(false);
-  const [stlBase64, setStlBase64] = useState<string | null>(null);
-  const [stepBase64, setStepBase64] = useState<string | null>(null);
-  const [currentScriptLanguage, setCurrentScriptLanguage] = useState<"openscad" | "cadquery">("openscad");
   const feaLoadingRef = useRef(false);
   feaLoadingRef.current = feaLoading;
   const drawingLoadingRef = useRef(false);
   drawingLoadingRef.current = drawingLoading;
-  const cadQueryLoadingRef = useRef(false);
-  cadQueryLoadingRef.current = cadQueryLoading;
   const [templateLoading, setTemplateLoading] = useState(false);
   const templateLoadingRef = useRef(false);
   templateLoadingRef.current = templateLoading;
@@ -120,37 +114,12 @@ export default function ConferencePage() {
       if (!res.ok) throw new Error(await res.text());
       const result = await res.json();
       setCadCode(result.iteration.script);
-      setCurrentScriptLanguage("openscad");
-      setStlBase64(null);
-      setStepBase64(null);
       setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
       setViewingVersionId(null);
     } catch (e) {
       console.error("OpenSCAD agent error:", e);
     } finally {
       setCadLoading(false);
-    }
-  }, []);
-
-  const handleRunCadQuery = useCallback(async () => {
-    const mid = meetingIdRef.current;
-    if (!mid || cadQueryLoadingRef.current) return;
-    setPlanUpdatedForCad(false);
-    setCadQueryLoading(true);
-    try {
-      const res = await fetch(`/api/meetings/${mid}/agent/cadquery`, { method: "POST" });
-      if (!res.ok) throw new Error(await res.text());
-      const result = await res.json();
-      setCadCode(result.iteration.script);
-      setCurrentScriptLanguage("cadquery");
-      setStlBase64(result.meta?.stl_base64 ?? null);
-      setStepBase64(result.meta?.step_base64 ?? null);
-      setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
-      setViewingVersionId(null);
-    } catch (e) {
-      console.error("CadQuery agent error:", e);
-    } finally {
-      setCadQueryLoading(false);
     }
   }, []);
 
@@ -163,9 +132,6 @@ export default function ConferencePage() {
       if (!res.ok) throw new Error(await res.text());
       const result = await res.json();
       setCadCode(result.iteration.script);
-      setCurrentScriptLanguage("openscad");
-      setStlBase64(null);
-      setStepBase64(null);
       setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
       setViewingVersionId(null);
     } catch (e) {
@@ -233,9 +199,6 @@ export default function ConferencePage() {
       if (!res.ok) throw new Error(await res.text());
       const result = await res.json();
       setCadCode(result.iteration.script);
-      setCurrentScriptLanguage("openscad");
-      setStlBase64(null);
-      setStepBase64(null);
       setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
       setViewingVersionId(null);
       // Store session context so WASM compile outcome can be reported to MuBit
@@ -435,12 +398,6 @@ export default function ConferencePage() {
       action: () => setCadTabOverride("preview"),
     },
     {
-      id: "run-cadquery",
-      triggers: ["run cadquery", "use cadquery", "cadquery model", "generate cadquery"],
-      cooldownMs: 8000,
-      action: () => handleRunCadQuery(),
-    },
-    {
       id: "quick-generate",
       triggers: ["quick generate", "quick gen", "template generate", "fast generate"],
       cooldownMs: 8000,
@@ -470,7 +427,7 @@ export default function ConferencePage() {
       cooldownMs: 3000,
       action: () => setCadTabOverride("drawing"),
     },
-  ], [handleRunOpenSCAD, handleRunCadQuery, handleRunTemplate, handleRefine, handleRunPlanner, handleRunFEA, handleRunDrawing]);
+  ], [handleRunOpenSCAD, handleRunTemplate, handleRefine, handleRunPlanner, handleRunFEA, handleRunDrawing]);
 
   const { commandLineIndices } = useVoiceCommands(lines, voiceCommands);
   const commandLineIndicesRef = useRef(commandLineIndices);
@@ -597,11 +554,6 @@ export default function ConferencePage() {
       viewingVersionId={viewingVersionId}
       onSelectVersion={handleSelectVersion}
       cadTabOverride={cadTabOverride}
-      onRunCadQuery={meetingId ? handleRunCadQuery : undefined}
-      cadQueryLoading={cadQueryLoading}
-      stlBase64={stlBase64}
-      stepBase64={stepBase64}
-      currentScriptLanguage={currentScriptLanguage}
       onRunTemplate={meetingId ? handleRunTemplate : undefined}
       templateLoading={templateLoading}
       onTemplateOutcome={meetingId ? handleTemplateOutcome : undefined}
