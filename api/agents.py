@@ -106,10 +106,9 @@ _relevance_agents: dict[str, Any] = {}
 
 def _get_relevance_agent(provider: str) -> Agent:
     if provider not in _relevance_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _relevance_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, RELEVANCE_CLASSIFIER_PROMPT),
+            _make_model(provider),
+            system_prompt=RELEVANCE_CLASSIFIER_PROMPT,
             output_type=str,
             retries=1,
         )
@@ -118,7 +117,7 @@ def _get_relevance_agent(provider: str) -> Agent:
 
 async def classify_relevance_batch(
     entries: list[TranscriptEntry],
-    provider: str = "groq",
+    provider: str = "cerebras",
 ) -> list[bool]:
     """Classify a batch of transcript entries using the LLM. Returns list of booleans."""
     if not entries:
@@ -174,13 +173,18 @@ Type-specific fields (include only the relevant ones):
 Block types and when to use them:
   objective    - physical build goal; populate success_criteria as a strict list
   variable     - a numeric parameter (dimensions, voltages, weights); set is_locked=true
-                 ONLY when the team explicitly agreed on that exact value
+                 ONLY when the team explicitly agreed on that exact value; use is_locked=false
+                 with a sensible default for any parameter that is estimated or typical for the object
   decision     - a design choice; list rejected_alternatives explicitly mentioned
-  missing_info - a required parameter not yet agreed upon; explain the downstream impact
+  missing_info - ONLY use when a value is truly unresolvable (e.g. a custom PCB board whose
+                 dimensions have never been mentioned and cannot be estimated); do NOT use for
+                 things that have well-known typical dimensions or that the CAD agent can draft
+                 with a reasonable default
 
 Rules:
 - reasoning must be ≥ 10 chars and cite specific transcript evidence
-- Never fabricate values; if a number is uncertain, use missing_info instead\
+- Prefer an unlocked variable with a sensible default over a missing_info block; reserve
+  missing_info for parameters that are both unknown AND cannot be estimated from context\
 """
 
 OPENSCAD_EDIT_SYSTEM_PROMPT = """\
@@ -264,12 +268,12 @@ def _filter_openscad_stderr(stderr: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 PROVIDER_CONFIG: dict[str, dict] = {
-    "groq": {
-        "model": "gateway/groq:llama-3.3-70b-versatile",
-        "model_name": "openai/gpt-oss-120b",
-        "label": "Pydantic Gateway / Groq (GPT OSS 120B)",
-        "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
-        "reasoning_effort": "high",  # gpt-oss-120b: low / medium / high
+    "cerebras": {
+        # Direct OpenAI-compat — Pydantic gateway's Custom BYOK type returns 500
+        "direct_base_url": "https://api.cerebras.ai/v1",
+        "model_name": "qwen-3-235b-a22b-instruct-2507",
+        "label": "Cerebras (Qwen3 235B Instruct)",
+        "key_env": "CEREBRAS_API_KEY",
     },
     "anthropic": {
         "model": "gateway/anthropic:claude-opus-4-7",
@@ -343,20 +347,26 @@ def _require_key(provider: str) -> None:
         raise RuntimeError(f"{cfg['key_env']} is not set. Add it to api/.env")
 
 
-def _system_prompt(provider: str, base: str) -> str:
-    """Prepend reasoning effort instruction if the provider supports it."""
-    effort = PROVIDER_CONFIG[provider].get("reasoning_effort")
-    if effort:
-        return f"Reasoning: {effort}\n\n{base}"
-    return base
+def _make_model(provider: str) -> Any:
+    cfg = PROVIDER_CONFIG[provider]
+    if "direct_base_url" in cfg:
+        from pydantic_ai.models.openai import OpenAIModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+        prov = OpenAIProvider(base_url=cfg["direct_base_url"], api_key=os.environ.get(cfg["key_env"], ""))
+        return OpenAIModel(cfg["model_name"], provider=prov)
+    if "gateway_route" in cfg:
+        from pydantic_ai.models.openai import OpenAIModel
+        from pydantic_ai.providers.gateway import gateway_provider as _gw
+        gw = _gw(cfg["gateway_upstream"], route=cfg["gateway_route"])
+        return OpenAIModel(cfg["model_name"], provider=gw)
+    return cfg["model"]
 
 
 def _get_generate_agent(provider: str) -> Agent:
     if provider not in _generate_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _generate_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, GENERATE_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=GENERATE_SYSTEM_PROMPT,
             output_type=str,
             retries=1,
         )
@@ -365,10 +375,9 @@ def _get_generate_agent(provider: str) -> Agent:
 
 def _get_planner_agent(provider: str) -> Agent:
     if provider not in _planner_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _planner_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, PLANNER_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=PLANNER_SYSTEM_PROMPT,
             output_type=str,
             retries=1,
         )
@@ -377,10 +386,9 @@ def _get_planner_agent(provider: str) -> Agent:
 
 def _get_openscad_meeting_agent(provider: str) -> Agent:
     if provider not in _openscad_meeting_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _openscad_meeting_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, OPENSCAD_MEETING_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=OPENSCAD_MEETING_SYSTEM_PROMPT,
             output_type=ModelIterationCreate,
             retries=1,
         )
@@ -389,10 +397,9 @@ def _get_openscad_meeting_agent(provider: str) -> Agent:
 
 def _get_openscad_edit_agent(provider: str) -> Agent:
     if provider not in _openscad_edit_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _openscad_edit_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, OPENSCAD_EDIT_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=OPENSCAD_EDIT_SYSTEM_PROMPT,
             output_type=OpenSCADEditOutput,
             retries=1,
         )
@@ -401,10 +408,9 @@ def _get_openscad_edit_agent(provider: str) -> Agent:
 
 def _get_openscad_fix_agent(provider: str) -> Agent:
     if provider not in _openscad_fix_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _openscad_fix_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, OPENSCAD_FIX_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=OPENSCAD_FIX_SYSTEM_PROMPT,
             output_type=str,
             retries=1,
         )
@@ -413,10 +419,9 @@ def _get_openscad_fix_agent(provider: str) -> Agent:
 
 def _get_refine_agent(provider: str) -> Agent:
     if provider not in _refine_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _refine_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, OPENSCAD_REFINE_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=OPENSCAD_REFINE_SYSTEM_PROMPT,
             output_type=NativeOutput(ModelIterationCreate),
             retries=1,
         )
@@ -490,7 +495,15 @@ def _strip_markdown_fences(text: str) -> str:
 
 
 def _model_settings(provider: str, temperature: float, max_tokens: int) -> Any:
-    return {"temperature": temperature, "max_tokens": max_tokens}
+    settings: dict[str, Any] = {"temperature": temperature, "max_tokens": max_tokens}
+    if effort := PROVIDER_CONFIG[provider].get("reasoning_effort"):
+        settings["openai_reasoning_effort"] = effort
+        settings["extra_body"] = {
+            "reasoning_effort": effort,
+            "temperature": temperature,
+            "top_p": 0.95,
+        }
+    return settings
 
 
 def _build_meta(cfg: dict, latency_ms: float, usage: Any) -> dict:
@@ -517,8 +530,8 @@ def _build_meta(cfg: dict, latency_ms: float, usage: Any) -> dict:
 
 async def run_generate(
     prompt: str,
-    provider: str = "groq",
-    temperature: float = 0.75,
+    provider: str = "cerebras",
+    temperature: float = 0.6,
     max_tokens: int = 8192,
     session_id: str | None = None,
 ) -> tuple[str, dict]:
@@ -561,9 +574,9 @@ async def run_generate(
 async def run_planner(
     transcript: list[TranscriptEntry],
     existing_blocks: list[PlanBlock],
-    provider: str = "groq",
-    temperature: float = 0.3,
-    max_tokens: int = 4096,
+    provider: str = "cerebras",
+    temperature: float = 0.6,
+    max_tokens: int = 12000,
     session_id: str | None = None,
 ) -> tuple[PlannerOutput, dict]:
     _require_key(provider)
@@ -646,9 +659,9 @@ def _expand_multiline_entries(
 async def run_planner_chunked(
     transcript: list[TranscriptEntry],
     existing_blocks: list[PlanBlock],
-    provider: str = "groq",
-    temperature: float = 0.3,
-    max_tokens: int = 4096,
+    provider: str = "cerebras",
+    temperature: float = 0.6,
+    max_tokens: int = 12000,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """Yield SSE event tuples for each chunk of the transcript.
 
@@ -734,9 +747,9 @@ async def run_planner_chunked(
 async def run_openscad_meeting(
     transcript: list[TranscriptEntry],
     blocks: list[PlanBlock],
-    provider: str = "groq",
-    temperature: float = 0.5,
-    max_tokens: int = 8192,
+    provider: str = "cerebras",
+    temperature: float = 0.6,
+    max_tokens: int = 16000,
     session_id: str | None = None,
 ) -> tuple[ModelIterationCreate, dict]:
     _require_key(provider)
@@ -791,8 +804,8 @@ async def run_openscad_meeting(
 async def run_openscad_edit(
     current_script: str,
     changed_blocks: list[PlanBlock],
-    provider: str = "groq",
-    max_tokens: int = 2048,
+    provider: str = "cerebras",
+    max_tokens: int = 8192,
 ) -> tuple[str, list[ScriptEdit], dict]:
     """Apply targeted edits to an existing OpenSCAD script based on changed blocks.
 
@@ -811,7 +824,7 @@ async def run_openscad_edit(
 
     t0 = time.perf_counter()
     result = await asyncio.wait_for(
-        agent.run(prompt, model_settings=_model_settings(provider, 0.3, max_tokens)),
+        agent.run(prompt, model_settings=_model_settings(provider, 0.6, max_tokens)),
         timeout=120,
     )
     latency_ms = (time.perf_counter() - t0) * 1000
@@ -830,8 +843,8 @@ async def run_openscad_edit(
 async def run_openscad_fix(
     current_script: str,
     stderr: str,
-    provider: str = "groq",
-    max_tokens: int = 8192,
+    provider: str = "cerebras",
+    max_tokens: int = 16000,
 ) -> tuple[str, dict]:
     """Ask the LLM to fix a script given OpenSCAD compiler stderr output.
 
@@ -849,7 +862,7 @@ async def run_openscad_fix(
 
     t0 = time.perf_counter()
     result = await asyncio.wait_for(
-        agent.run(prompt, model_settings=_model_settings(provider, 0.2, max_tokens)),
+        agent.run(prompt, model_settings=_model_settings(provider, 0.5, max_tokens)),
         timeout=120,
     )
     latency_ms = (time.perf_counter() - t0) * 1000

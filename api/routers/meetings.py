@@ -46,7 +46,7 @@ def _get_meeting_or_404(meeting_id: UUID) -> Meeting:
 
 
 class ProviderEnum(str, Enum):
-    groq = "groq"
+    cerebras = "cerebras"
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +174,9 @@ class OpenSCADResult(BaseModel):
 @router.post("/meetings/{meeting_id}/agent/plan", tags=["agents"])
 async def trigger_planner(
     meeting_id: UUID,
-    provider: ProviderEnum = Query(default=ProviderEnum.groq),
+    provider: ProviderEnum = Query(default=ProviderEnum.cerebras),
     temperature: float = Query(default=0.3, ge=0.0, le=2.0),
-    max_tokens: int = Query(default=4096, ge=256, le=16384),
+    max_tokens: int = Query(default=12000, ge=256, le=32768),
 ):
     """Stream planner results as SSE events, one transcript chunk at a time."""
     _get_meeting_or_404(meeting_id)
@@ -262,9 +262,9 @@ async def trigger_planner(
 @router.post("/meetings/{meeting_id}/agent/model", response_model=OpenSCADResult, tags=["agents"])
 async def trigger_openscad(
     meeting_id: UUID,
-    provider: ProviderEnum = Query(default=ProviderEnum.groq),
+    provider: ProviderEnum = Query(default=ProviderEnum.cerebras),
     temperature: float = Query(default=0.5, ge=0.0, le=2.0),
-    max_tokens: int = Query(default=8192, ge=256, le=16384),
+    max_tokens: int = Query(default=16000, ge=256, le=32768),
     max_fix_iterations: int = Query(default=3, ge=0, le=5),
 ):
     """Run the OpenSCAD Agent, compile the result, and iterate fixes until clean."""
