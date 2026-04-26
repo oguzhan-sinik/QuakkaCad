@@ -2,6 +2,17 @@
 
 AI-powered voice-first CAD collaboration platform. Engineering teams join a voice conference, discuss designs naturally, and AI agents extract structured plans and generate parametric 3D models in real time.
 
+## Proof of Concept
+
+A hobby rocket generation with given steps. 
+
+<img width="1512" height="820" alt="Screenshot 2026-04-26 at 13 49 58" src="https://github.com/user-attachments/assets/8cf4ecbe-11af-4f23-a349-4b8f6ea279b8" />
+<img width="1512" height="821" alt="Screenshot 2026-04-26 at 13 51 53" src="https://github.com/user-attachments/assets/881a8078-47bc-447e-99c6-0325551c9a67" />
+<img width="1512" height="819" alt="Screenshot 2026-04-26 at 13 54 06" src="https://github.com/user-attachments/assets/9489613c-c3d8-49f4-9f4c-e1b5bce4a685" />
+
+<img width="1508" height="809" alt="Screenshot 2026-04-26 at 13 56 29" src="https://github.com/user-attachments/assets/89d3aa7f-c27a-439b-8034-bd33482fe9c6" />
+
+
 ## How It Works
 
 ```
