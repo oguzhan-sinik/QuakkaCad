@@ -22,7 +22,7 @@ from agents import (
     run_planner_chunked,
 )
 from cadquery_compiler import compile_cadquery
-from mubit_client import record_generation_outcome, reflect_on_session
+from mubit_client import record_generation_outcome, record_template_outcome, reflect_on_session
 from openscad_compiler import compile_openscad
 from schemas import (
     FEAAnalysis,
@@ -607,7 +607,12 @@ class TemplateRequest(BaseModel):
 
 @router.post("/meetings/{meeting_id}/agent/template", tags=["agents"])
 async def trigger_template(meeting_id: UUID, body: TemplateRequest):
-    """Fast template-based generation via Cerebras. Target: <8s e2e."""
+    """Fast template-based generation. Target: <8s e2e.
+
+    The response includes a `session_id` in `meta` that the frontend should
+    POST back to `/meetings/{meeting_id}/agent/template/outcome` once WASM
+    compilation completes, to close the MuBit learning loop.
+    """
     from templates.render import render_from_prompt
 
     _get_meeting_or_404(meeting_id)
@@ -640,6 +645,32 @@ async def trigger_template(meeting_id: UUID, body: TemplateRequest):
         meeting_id, spec.assembly_type, meta.get("latency_ms", 0),
     )
     return OpenSCADResult(iteration=iteration, meta=meta)
+
+
+class TemplateOutcomeRequest(BaseModel):
+    assembly_type: str
+    success: bool
+    error: str | None = None
+    session_id: str | None = None  # accepted but unused; learning goes to shared library session
+
+
+@router.post("/meetings/{meeting_id}/agent/template/outcome", tags=["agents"])
+async def report_template_outcome(meeting_id: UUID, body: TemplateOutcomeRequest):
+    """Frontend reports whether WASM compilation of a template-generated model succeeded.
+
+    Closes the MuBit feedback loop: reflect() extracts lessons from the shared
+    template library session, then record_outcome() reinforces them so future
+    get_template_context() calls surface better parameter guidance.
+    """
+    _get_meeting_or_404(meeting_id)
+    asyncio.create_task(
+        record_template_outcome(
+            assembly_type=body.assembly_type,
+            success=body.success,
+            error_msg=body.error,
+        )
+    )
+    return {"status": "ok"}
 
 
 class FEAResult(BaseModel):

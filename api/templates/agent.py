@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -128,16 +129,40 @@ async def run_template_agent(
 ) -> tuple[AssemblySpec, dict]:
     """Classify a prompt into an AssemblySpec via JSON parsing.
 
+    Fetches MuBit template library context before the LLM call to surface
+    parameter schemas and past compilation lessons. Records the interaction
+    in MuBit memory after classification.
+
     Returns (spec, meta_dict).
     """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
     from agents import PROVIDER_CONFIG, _require_key, _build_meta, _model_settings
+    from mubit_client import get_template_context
+
     _require_key(provider)
     cfg = PROVIDER_CONFIG[provider]
     agent = _get_template_agent(provider)
 
+    session_id = str(uuid.uuid4())
+
+    # Fetch relevant template context from MuBit before classification.
+    # This surfaces parameter ranges, constraints, and past lessons so the
+    # LLM makes better-informed parameter choices. Falls back gracefully to
+    # an empty string if MuBit is unavailable.
+    mubit_context = await get_template_context(prompt)
+    enriched_prompt = prompt
+    if mubit_context:
+        enriched_prompt = (
+            f"AVAILABLE TEMPLATE KNOWLEDGE (parameter schemas, constraints, lessons):\n"
+            f"{mubit_context}\n\n"
+            f"USER REQUEST:\n{prompt}"
+        )
+
     t0 = time.perf_counter()
     result = await asyncio.wait_for(
-        agent.run(prompt, model_settings=_model_settings(provider, 0.3, 4096)),
+        agent.run(enriched_prompt, model_settings=_model_settings(provider, 0.3, 4096)),
         timeout=30,
     )
     latency_ms = (time.perf_counter() - t0) * 1000
@@ -178,8 +203,10 @@ async def run_template_agent(
 
     meta = _build_meta(cfg, latency_ms, result.usage())
     meta["assembly_type"] = spec.assembly_type
+    meta["session_id"] = session_id
     logger.info(
         "Template agent classified as %s in %.0fms",
         spec.assembly_type, latency_ms,
     )
+
     return spec, meta

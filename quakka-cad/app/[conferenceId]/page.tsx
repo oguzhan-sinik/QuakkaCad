@@ -54,6 +54,9 @@ export default function ConferencePage() {
   const [templateLoading, setTemplateLoading] = useState(false);
   const templateLoadingRef = useRef(false);
   templateLoadingRef.current = templateLoading;
+  // Stores the MuBit session context for the most recent template generation,
+  // so the WASM compile outcome can be reported back to close the learning loop.
+  const templateSessionRef = useRef<{ sessionId: string; assemblyType: string } | null>(null);
   const modelIterationsRef = useRef<ModelIteration[]>([]);
   modelIterationsRef.current = modelIterations;
   const cadLoadingRef = useRef(false);
@@ -227,10 +230,38 @@ export default function ConferencePage() {
       setStepBase64(null);
       setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
       setViewingVersionId(null);
+      // Store session context so WASM compile outcome can be reported to MuBit
+      const sessionId = result.meta?.session_id;
+      const assemblyType = result.meta?.assembly_type;
+      if (sessionId && assemblyType) {
+        templateSessionRef.current = { sessionId, assemblyType };
+      }
     } catch (e) {
       console.error("Template generation error:", e);
     } finally {
       setTemplateLoading(false);
+    }
+  }, []);
+
+  const handleTemplateOutcome = useCallback(async (success: boolean, error?: string) => {
+    const mid = meetingIdRef.current;
+    const session = templateSessionRef.current;
+    if (!mid || !session) return;
+    // Clear so we don't double-report
+    templateSessionRef.current = null;
+    try {
+      await fetch(`/api/meetings/${mid}/agent/template/outcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: session.sessionId,
+          assembly_type: session.assemblyType,
+          success,
+          error: error ?? null,
+        }),
+      });
+    } catch (e) {
+      console.warn("Template outcome reporting failed:", e);
     }
   }, []);
 
@@ -565,6 +596,7 @@ export default function ConferencePage() {
       currentScriptLanguage={currentScriptLanguage}
       onRunTemplate={meetingId ? handleRunTemplate : undefined}
       templateLoading={templateLoading}
+      onTemplateOutcome={meetingId ? handleTemplateOutcome : undefined}
       onRunFEA={meetingId ? handleRunFEA : undefined}
       feaLoading={feaLoading}
       feaData={feaData}

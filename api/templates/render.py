@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from .agent import run_template_agent
@@ -27,4 +28,17 @@ async def render_from_prompt(
         "Template render complete: %s, %d chars SCAD",
         spec.assembly_type, len(scad_source),
     )
+
+    # Record the generation trace into the shared MuBit library session so
+    # future get_template_context() calls can learn from parameter choices.
+    from mubit_client import remember_template_generation
+    asyncio.create_task(
+        remember_template_generation(
+            prompt=prompt,
+            assembly_type=spec.assembly_type,
+            scad_length=len(scad_source),
+            model_used=meta.get("model_name", "unknown"),
+        )
+    )
+
     return spec, scad_source, meta

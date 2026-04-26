@@ -54,6 +54,7 @@ interface ConferenceRoomProps {
   currentScriptLanguage?: "openscad" | "cadquery";
   onRunTemplate?: () => void;
   templateLoading?: boolean;
+  onTemplateOutcome?: (success: boolean, error?: string) => void;
   onRunFEA?: () => void;
   feaLoading?: boolean;
   feaData?: FEAAnalysisData | null;
@@ -96,6 +97,7 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
     currentScriptLanguage,
     onRunTemplate,
     templateLoading,
+    onTemplateOutcome,
     onRunFEA,
     feaLoading,
     feaData,
@@ -225,6 +227,7 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
               currentScriptLanguage={currentScriptLanguage}
               onRunTemplate={onRunTemplate}
               templateLoading={templateLoading}
+              onTemplateOutcome={onTemplateOutcome}
               onRunFEA={onRunFEA}
               feaLoading={feaLoading}
               feaData={feaData}

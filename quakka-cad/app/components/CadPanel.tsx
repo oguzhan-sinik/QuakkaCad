@@ -52,6 +52,8 @@ interface CadPanelProps {
   currentScriptLanguage?: "openscad" | "cadquery";
   onRunTemplate?: () => void;
   templateLoading?: boolean;
+  /** Called when WASM compiles a template-generated model (success or failure). */
+  onTemplateOutcome?: (success: boolean, error?: string) => void;
   onRunFEA?: () => void;
   feaLoading?: boolean;
   feaData?: FEAAnalysisData | null;
@@ -77,6 +79,7 @@ export default function CadPanel({
   currentScriptLanguage = "openscad",
   onRunTemplate,
   templateLoading = false,
+  onTemplateOutcome,
   onRunFEA,
   feaLoading = false,
   feaData,
@@ -90,6 +93,9 @@ export default function CadPanel({
   const [pendingStlBase64, setPendingStlBase64] = useState<string | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
+
+  const onTemplateOutcomeRef = useRef(onTemplateOutcome);
+  onTemplateOutcomeRef.current = onTemplateOutcome;
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<any>(null);
@@ -282,12 +288,16 @@ export default function CadPanel({
           } else {
             log("Compile returned but no mesh data");
           }
+          // Report WASM compile success to MuBit via the template outcome callback
+          onTemplateOutcomeRef.current?.(true);
           break;
         }
         case "error": {
           worker.removeEventListener("message", handler);
           setCompiling(false);
           log(`Compile error: ${e.data.text}`);
+          // Report WASM compile failure to MuBit so it learns from bad parameter choices
+          onTemplateOutcomeRef.current?.(false, e.data.text);
           break;
         }
       }
