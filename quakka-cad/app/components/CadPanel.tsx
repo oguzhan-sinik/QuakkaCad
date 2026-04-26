@@ -662,22 +662,7 @@ export default function CadPanel({
                 </svg>
                 Refining...
               </>
-            ) : "Refine"}
-          </button>
-          <button
-            onClick={onUpdateCad}
-            disabled={!onUpdateCad || cadLoading || refineLoading}
-            className="text-xs px-2.5 py-1 bg-violet-600 text-white rounded hover:bg-violet-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-          >
-            {cadLoading ? (
-              <>
-                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                </svg>
-                Generating...
-              </>
-            ) : "Update 3D"}
+            ) : "Opus Gen"}
           </button>
           <button
             onClick={onRunCadQuery}

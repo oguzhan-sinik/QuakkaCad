@@ -6,12 +6,14 @@ from ..models import (
     FinnedRocketBodySpec,
     FlangedTubeSpec,
     GearTrainSpec,
+    PlanetaryGearSpec,
 )
-from . import bushing_assembly, finned_rocket_body, flanged_tube, gear_train
+from . import bushing_assembly, finned_rocket_body, flanged_tube, gear_train, planetary_gear
 
 _COMPOSERS = {
     "finned_rocket_body": finned_rocket_body.compose,
     "gear_train": gear_train.compose,
+    "planetary_gear": planetary_gear.compose,
     "bushing_assembly": bushing_assembly.compose,
     "flanged_tube": flanged_tube.compose,
 }

@@ -68,6 +68,26 @@ class GearTrainSpec(BaseModel):
         return self
 
 
+class PlanetaryGearSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["planetary_gear"] = "planetary_gear"
+    sun_teeth: int = Field(ge=8, le=60, description="Sun gear tooth count")
+    planet_teeth: int = Field(ge=8, le=60, description="Planet gear tooth count")
+    planet_count: int = Field(ge=2, le=6, description="Number of planet gears")
+    module_val: float = Field(gt=0.5, lt=10, description="Gear module (mm)")
+    thickness: float = Field(gt=1, lt=50, description="Gear thickness mm")
+    bore_d: float = Field(default=5, gt=0, lt=50, description="Bore diameter mm")
+    include_ring_gear: bool = Field(default=True, description="Include the outer ring gear")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        # Ring teeth = sun + 2*planet for proper meshing
+        ring_teeth = self.sun_teeth + 2 * self.planet_teeth
+        if ring_teeth > 200:
+            raise ValueError(f"Resulting ring gear ({ring_teeth} teeth) too large; reduce sun or planet teeth")
+        return self
+
+
 class BushingAssemblySpec(BaseModel):
     reasoning: str = Field(description="Brief explanation of parameter choices")
     assembly_type: Literal["bushing_assembly"] = "bushing_assembly"
@@ -121,6 +141,6 @@ class FlangedTubeSpec(BaseModel):
 
 
 AssemblySpec = Annotated[
-    Union[FinnedRocketBodySpec, GearTrainSpec, BushingAssemblySpec, FlangedTubeSpec],
+    Union[FinnedRocketBodySpec, GearTrainSpec, PlanetaryGearSpec, BushingAssemblySpec, FlangedTubeSpec],
     Field(discriminator="assembly_type"),
 ]

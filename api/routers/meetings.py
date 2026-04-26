@@ -52,7 +52,9 @@ def _get_meeting_or_404(meeting_id: UUID) -> Meeting:
 
 
 class ProviderEnum(str, Enum):
+    groq = "groq"
     cerebras = "cerebras"
+    anthropic = "anthropic"
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +182,7 @@ class OpenSCADResult(BaseModel):
 @router.post("/meetings/{meeting_id}/agent/plan", tags=["agents"])
 async def trigger_planner(
     meeting_id: UUID,
-    provider: ProviderEnum = Query(default=ProviderEnum.cerebras),
+    provider: ProviderEnum = Query(default=ProviderEnum.groq),
     temperature: float = Query(default=0.3, ge=0.0, le=2.0),
     max_tokens: int = Query(default=12000, ge=256, le=32768),
 ):
@@ -268,7 +270,7 @@ async def trigger_planner(
 @router.post("/meetings/{meeting_id}/agent/model", response_model=OpenSCADResult, tags=["agents"])
 async def trigger_openscad(
     meeting_id: UUID,
-    provider: ProviderEnum = Query(default=ProviderEnum.cerebras),
+    provider: ProviderEnum = Query(default=ProviderEnum.anthropic),
     temperature: float = Query(default=0.5, ge=0.0, le=2.0),
     max_tokens: int = Query(default=16000, ge=256, le=32768),
     max_fix_iterations: int = Query(default=3, ge=0, le=5),
@@ -744,9 +746,9 @@ async def trigger_technical_drawing(meeting_id: UUID):
         t0 = time.perf_counter()
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
             resp = await client.post(
-                "https://fal.run/openai/gpt-image-2",
+                "https://fal.run/fal-ai/flux/schnell",
                 headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
-                json={"prompt": prompt},
+                json={"prompt": prompt, "image_size": "landscape_16_9", "num_images": 1},
             )
             resp.raise_for_status()
             result = resp.json()
@@ -776,7 +778,7 @@ async def trigger_technical_drawing(meeting_id: UUID):
         )
 
         meta = {
-            "provider": "fal.ai / gpt-image-2",
+            "provider": "fal.ai / Flux Schnell",
             "latency_ms": round(latency_ms, 1),
         }
 

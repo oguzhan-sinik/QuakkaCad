@@ -293,10 +293,9 @@ _fea_agents: dict[str, Any] = {}
 
 def _get_fea_agent(provider: str) -> Agent:
     if provider not in _fea_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _fea_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, FEA_ANALYSIS_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=FEA_ANALYSIS_SYSTEM_PROMPT,
             output_type=str,
             retries=1,
         )
@@ -418,10 +417,9 @@ _cadquery_refine_agents: dict[str, Any] = {}
 
 def _get_cadquery_meeting_agent(provider: str) -> Agent:
     if provider not in _cadquery_meeting_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _cadquery_meeting_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, CADQUERY_MEETING_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=CADQUERY_MEETING_SYSTEM_PROMPT,
             output_type=ModelIterationCreate,
             retries=1,
         )
@@ -430,10 +428,9 @@ def _get_cadquery_meeting_agent(provider: str) -> Agent:
 
 def _get_cadquery_fix_agent(provider: str) -> Agent:
     if provider not in _cadquery_fix_agents:
-        cfg = PROVIDER_CONFIG[provider]
         _cadquery_fix_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, CADQUERY_FIX_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=CADQUERY_FIX_SYSTEM_PROMPT,
             output_type=str,
             retries=1,
         )
@@ -459,8 +456,13 @@ def _filter_openscad_stderr(stderr: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 PROVIDER_CONFIG: dict[str, dict] = {
+    "groq": {
+        "model": "gateway/groq:llama-3.3-70b-versatile",
+        "model_name": "llama-3.3-70b-versatile",
+        "label": "Pydantic Gateway / Groq (Llama 3.3 70B)",
+        "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
+    },
     "cerebras": {
-        # Direct OpenAI-compat — Pydantic gateway's Custom BYOK type returns 500
         "direct_base_url": "https://api.cerebras.ai/v1",
         "model_name": "qwen-3-235b-a22b-instruct-2507",
         "label": "Cerebras (Qwen3 235B Instruct)",
@@ -470,12 +472,6 @@ PROVIDER_CONFIG: dict[str, dict] = {
         "model": "gateway/anthropic:claude-opus-4-7",
         "model_name": "claude-opus-4-7",
         "label": "Pydantic Gateway / Anthropic (Claude Opus 4.7)",
-        "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
-    },
-    "cerebras": {
-        "model": "gateway/cerebras:qwen-3-235b-a22b-instruct-2507",
-        "model_name": "qwen-3-235b-a22b-instruct-2507",
-        "label": "Pydantic Gateway / Cerebras (Qwen 3 235B)",
         "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
     },
 }

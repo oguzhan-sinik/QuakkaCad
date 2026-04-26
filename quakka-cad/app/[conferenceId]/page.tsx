@@ -156,10 +156,13 @@ export default function ConferencePage() {
     if (!mid || refineLoadingRef.current) return;
     setRefineLoading(true);
     try {
-      const res = await fetch(`/api/meetings/${mid}/agent/refine`, { method: "POST" });
+      const res = await fetch(`/api/meetings/${mid}/agent/model`, { method: "POST" });
       if (!res.ok) throw new Error(await res.text());
       const result = await res.json();
       setCadCode(result.iteration.script);
+      setCurrentScriptLanguage("openscad");
+      setStlBase64(null);
+      setStepBase64(null);
       setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
       setViewingVersionId(null);
     } catch (e) {
@@ -323,7 +326,7 @@ export default function ConferencePage() {
             // Auto-trigger 3D generation only if planning actually produced/changed blocks
             if (created > 0 || updated > 0) {
               setPlanUpdatedForCad(true);
-              handleRunOpenSCAD();
+              handleRunTemplate();
             }
             // Exit immediately — don't wait for the stream to close naturally,
             // since Next.js dev may not propagate the backend's connection close.
@@ -345,7 +348,7 @@ export default function ConferencePage() {
       setTargetedBlockIds(new Set());
       setProcessingUpToEntry(null);
     }
-  }, [handleRunOpenSCAD]);
+  }, [handleRunTemplate]);
 
   const handleSelectVersion = useCallback((id: string | null) => {
     if (id === null) {
@@ -366,11 +369,11 @@ export default function ConferencePage() {
       id: "update-cad",
       triggers: ["update 3d design", "update the design", "generate 3d", "generate the model", "generate model"],
       cooldownMs: 8000,
-      action: () => handleRunOpenSCAD(),
+      action: () => handleRunTemplate(),
     },
     {
       id: "refine",
-      triggers: ["refine generation", "refine the model", "refine design", "refine the design"],
+      triggers: ["refine generation", "refine the model", "refine design", "refine the design", "generate with opus"],
       cooldownMs: 8000,
       action: () => handleRefine(),
     },
@@ -548,7 +551,7 @@ export default function ConferencePage() {
       onRunPlanner={transcriptUpdated ? handleRunPlanner : undefined}
       cadCode={cadCode}
       cadLoading={cadLoading}
-      onUpdateCad={planUpdatedForCad && viewingVersionId === null ? handleRunOpenSCAD : undefined}
+      onUpdateCad={undefined}
       onRefine={meetingId ? handleRefine : undefined}
       refineLoading={refineLoading}
       modelIterations={modelIterations}

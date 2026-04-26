@@ -37,11 +37,17 @@ fin_root_chord, fin_tip_chord, fin_height, fin_sweep, fin_thickness, fins_throug
 
 2. "gear_train" — fields: reasoning, assembly_type, gear_count, teeth (array of ints), \
 module_val, thickness, bore_d
+Use for LINEAR gear trains only (gears side by side on parallel axes).
 
-3. "bushing_assembly" — fields: reasoning, assembly_type, bore_d, outer_d, length, \
+3. "planetary_gear" — fields: reasoning, assembly_type, sun_teeth, planet_teeth, \
+planet_count, module_val, thickness, bore_d, include_ring_gear
+Use for PLANETARY gear sets (sun gear + orbiting planets + ring gear). \
+Ring teeth are auto-computed as sun_teeth + 2*planet_teeth.
+
+5. "bushing_assembly" — fields: reasoning, assembly_type, bore_d, outer_d, length, \
 flange, flange_outer_d, flange_thickness
 
-4. "flanged_tube" — fields: reasoning, assembly_type, tube_outer_d, tube_inner_d, \
+6. "flanged_tube" — fields: reasoning, assembly_type, tube_outer_d, tube_inner_d, \
 tube_length, flange_outer_d, flange_thickness, bolt_count, bolt_circle_d, bolt_hole_d, \
 flange_both_ends
 
@@ -50,6 +56,8 @@ RULES:
 - If the user omits a dimension, use sensible engineering defaults
 - "reasoning" must briefly explain your choices
 - Pick the CLOSEST matching assembly_type
+- If "planetary", "sun gear", "planet gear", "epicyclic" → planetary_gear
+- If "gear train", "gearbox", "reduction" (linear arrangement) → gear_train
 - Convert units: "1m"→1000, "2 inches"→50.8
 
 EXAMPLES:
@@ -63,6 +71,11 @@ Input: "90mm motor tube, 3mm wall, 200mm long, 4 fins"
 Input: "3-gear train, module 1.5, 20-40-60 teeth, 5mm thick"
 {"reasoning":"3-stage reduction","assembly_type":"gear_train","gear_count":3,\
 "teeth":[20,40,60],"module_val":1.5,"thickness":5,"bore_d":5}
+
+Input: "planetary gear set, 20-tooth sun, 15-tooth planets, 3 planets"
+{"reasoning":"Standard planetary with 3 planets","assembly_type":"planetary_gear",\
+"sun_teeth":20,"planet_teeth":15,"planet_count":3,"module_val":2,"thickness":8,\
+"bore_d":5,"include_ring_gear":true}
 
 Input: "ball bushing 8mm bore, 15mm OD, 24mm long"
 {"reasoning":"Standard bushing dimensions","assembly_type":"bushing_assembly",\
