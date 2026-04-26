@@ -31,6 +31,7 @@ from .models import (
     PlanetaryGearSpec,
     RackAndPinionSpec,
     ShaftCouplingSpec,
+    StackAssemblySpec,
     UniversalJointSpec,
     WormGearSpec,
 )
@@ -290,6 +291,86 @@ Input: "80x50mm avionics plate, 3mm thick, M3 screw holes, cable slot in centre"
 {"hole_type":"circular","diameter":3.4,"x":35,"y":12,"countersink":false},\
 {"hole_type":"rect_slot","width":20,"height":10,"corner_r":2,"x":0,"y":0}],\
 "color":"Silver"}
+
+MULTI-PART ASSEMBLIES (assembly_type = "stack_assembly"):
+
+21. "stack_assembly" — fields: reasoning, assembly_type, parts (array of {x_offset, y_offset, z_offset, rx, ry, rz, spec})
+Use when the user requests MULTIPLE components positioned relative to each other \
+(e.g. "bulkhead with a perpendicular table on top"). \
+Each element in "parts" has:
+  - x_offset, y_offset, z_offset: position in mm (0,0,0 = origin). \
+    Compute from bottom up so parts don't overlap.
+  - rx, ry, rz: rotation in degrees around X, Y, Z axes (default 0,0,0 = flat/horizontal). \
+    Use rx=90 to stand a flat part upright (perpendicular to the bulkhead), facing along the Y axis. \
+    Rotation is applied BEFORE translation.
+  - spec: a complete template spec object (any single-part type above)
+
+STACK RULES:
+- ONLY generate parts the user explicitly asks for. Do NOT add extra parts they did not mention.
+- If the user asks for just one part, use the single-part template directly — NOT stack_assembly.
+- "perpendicular", "vertical", "upright", "standing" table/plate → use rx=90 (rotated 90° around X). \
+  After rx=90, the plate's "depth" dimension becomes its height. \
+  The plate's centre is at its z_offset, so set z_offset = bulkhead_z + bulkhead_thickness/2 + plate_depth/2.
+- Each sub-spec must be a complete, valid spec for its type.
+- "reasoning" at the top level must explain the layout and how offsets/rotations were computed.
+- When the user says "table" or "shelf" in a rocket/avionics context → use mounting_plate.
+
+HEIGHT REFERENCE for z_offset calculation (all parts centred on Z before rotation):
+- bulkhead: height = thickness
+- mounting_plate: height = thickness (flat) or depth (if rotated rx=90)
+- body_tube: height = length
+- For centred parts: z_offset_N = z_offset_(N-1) + height_(N-1)/2 + height_N/2
+
+Input: "bulkhead 5mm thick with 3 M3 screw holes, then a perpendicular table 200mm tall, same diameter as bulkhead, 5mm thick"
+{"reasoning":"2-part assembly: bulkhead (5mm thick, 60mm OD, 3× M3 bolt circle) flat at z=0, \
+then a mounting plate rotated rx=90 to stand upright. Plate width=60 (matches bulkhead OD), depth=200 (becomes height after rotation), \
+thickness=5. After rx=90 rotation the plate's 200mm depth becomes vertical. \
+z_offset = 0 + 5/2 + 200/2 = 102.5.",\
+"assembly_type":"stack_assembly","parts":[\
+{"x_offset":0,"y_offset":0,"z_offset":0,"rx":0,"ry":0,"rz":0,\
+"spec":{"reasoning":"Bulkhead 5mm thick, 3 M3 bolt circle on edge","assembly_type":"bulkhead",\
+"outer_d":60,"thickness":5,"center_bore_d":0,"shoulder_d":0,"shoulder_length":0,\
+"holes":[{"hole_type":"bolt_circle","bolt_count":3,"bolt_circle_d":52,"bolt_hole_d":3.4,\
+"start_angle":0,"countersink":false}],"color":"BurlyWood"}},\
+{"x_offset":0,"y_offset":0,"z_offset":102.5,"rx":90,"ry":0,"rz":0,\
+"spec":{"reasoning":"Avionics table standing upright (rx=90), 200mm tall, 60mm wide, 5mm thick, cable slot in lower half",\
+"assembly_type":"mounting_plate","width":60,"depth":200,"thickness":5,"corner_r":3,\
+"holes":[{"hole_type":"rect_slot","width":15,"height":8,"corner_r":2,"x":0,"y":-50}],\
+"color":"Silver"}}]}
+
+Input: "two bulkheads 50mm apart with a body tube between them"
+{"reasoning":"3-part assembly: bottom bulkhead at z=0 (3mm), BT-50 tube (50mm long) centred at z=26.5, \
+top bulkhead at z=53. All flat (no rotation needed).",\
+"assembly_type":"stack_assembly","parts":[\
+{"x_offset":0,"y_offset":0,"z_offset":0,"rx":0,"ry":0,"rz":0,\
+"spec":{"reasoning":"Bottom closure bulkhead","assembly_type":"bulkhead",\
+"outer_d":24,"thickness":3,"center_bore_d":0,"shoulder_d":0,"shoulder_length":0,"holes":[],"color":"BurlyWood"}},\
+{"x_offset":0,"y_offset":0,"z_offset":26.5,"rx":0,"ry":0,"rz":0,\
+"spec":{"reasoning":"BT-50 body tube 50mm","assembly_type":"body_tube",\
+"bt_designation":"BT-50","outer_d":24.8,"wall":0.8,"length":50,"holes":[],"color":"SteelBlue"}},\
+{"x_offset":0,"y_offset":0,"z_offset":53,"rx":0,"ry":0,"rz":0,\
+"spec":{"reasoning":"Top closure bulkhead","assembly_type":"bulkhead",\
+"outer_d":24,"thickness":3,"center_bore_d":0,"shoulder_d":0,"shoulder_length":0,"holes":[],"color":"BurlyWood"}}]}
+
+Input: "bulkhead with 3 M3 screw holes, then a horizontal table above it with a cable slot, then another bulkhead on top"
+{"reasoning":"3-part stack: bottom bulkhead (3mm), flat mounting plate (5mm), top bulkhead (3mm). \
+All flat (no rotation). z_offsets: 0, 4, 8.",\
+"assembly_type":"stack_assembly","parts":[\
+{"x_offset":0,"y_offset":0,"z_offset":0,"rx":0,"ry":0,"rz":0,\
+"spec":{"reasoning":"Bottom bulkhead, 3× M3","assembly_type":"bulkhead",\
+"outer_d":60,"thickness":3,"center_bore_d":0,"shoulder_d":0,"shoulder_length":0,\
+"holes":[{"hole_type":"bolt_circle","bolt_count":3,"bolt_circle_d":52,"bolt_hole_d":3.4,\
+"start_angle":0,"countersink":false}],"color":"BurlyWood"}},\
+{"x_offset":0,"y_offset":0,"z_offset":4,"rx":0,"ry":0,"rz":0,\
+"spec":{"reasoning":"Flat table, cable slot in centre","assembly_type":"mounting_plate",\
+"width":60,"depth":60,"thickness":5,"corner_r":3,\
+"holes":[{"hole_type":"rect_slot","width":20,"height":10,"corner_r":2,"x":0,"y":0}],\
+"color":"Silver"}},\
+{"x_offset":0,"y_offset":0,"z_offset":8,"rx":0,"ry":0,"rz":0,\
+"spec":{"reasoning":"Top bulkhead, 3× M3","assembly_type":"bulkhead",\
+"outer_d":60,"thickness":3,"center_bore_d":0,"shoulder_d":0,"shoulder_length":0,\
+"holes":[{"hole_type":"bolt_circle","bolt_count":3,"bolt_circle_d":52,"bolt_hole_d":3.4,\
+"start_angle":0,"countersink":false}],"color":"BurlyWood"}}]}
 """
 
 _template_agents: dict[str, Any] = {}

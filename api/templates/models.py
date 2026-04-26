@@ -500,6 +500,58 @@ class DifferentialGearSpec(BaseModel):
         return self
 
 
+# Single-part spec union — every template type except stack_assembly.
+# Used as the element type inside StackAssemblySpec.parts.
+SinglePartSpec = Annotated[
+    Union[
+        FinnedRocketBodySpec,
+        GearTrainSpec,
+        PlanetaryGearSpec,
+        BushingAssemblySpec,
+        FlangedTubeSpec,
+        RackAndPinionSpec,
+        WormGearSpec,
+        HelicalSpringSpec,
+        ShaftCouplingSpec,
+        HexStandoffSpec,
+        FourBarLinkageSpec,
+        LeadScrewSpec,
+        CamFollowerSpec,
+        UniversalJointSpec,
+        BeltPulleySpec,
+        DifferentialGearSpec,
+        BulkheadSpec,
+        BodyTubeSpec,
+        MountingPlateSpec,
+    ],
+    Field(discriminator="assembly_type"),
+]
+
+
+class StackedPart(BaseModel):
+    """One part inside a stack assembly, positioned and optionally rotated."""
+    x_offset: float = Field(default=0, description="X-axis offset (mm) — 0 = centred")
+    y_offset: float = Field(default=0, description="Y-axis offset (mm) — 0 = centred")
+    z_offset: float = Field(default=0, description="Z-axis offset (mm) — 0 = build-plate level")
+    rx: float = Field(default=0, description="Rotation around X axis (degrees). 90 = stand a flat plate upright facing Y.")
+    ry: float = Field(default=0, description="Rotation around Y axis (degrees). 90 = stand a flat plate upright facing X.")
+    rz: float = Field(default=0, description="Rotation around Z axis (degrees). Spin in the horizontal plane.")
+    spec: SinglePartSpec = Field(description="The template spec for this part")
+
+
+class StackAssemblySpec(BaseModel):
+    """Multiple templates positioned and rotated relative to each other.
+
+    Use when the user describes several components arranged together
+    (e.g. "bulkhead with a perpendicular table on top").
+    Each part has xyz offsets and rotation angles.
+    """
+    reasoning: str = Field(description="Brief explanation of the overall assembly")
+    assembly_type: Literal["stack_assembly"] = "stack_assembly"
+    parts: list[StackedPart] = Field(min_length=2, description="Ordered list of parts")
+
+
+# Full assembly spec union — includes both single parts and stacks.
 AssemblySpec = Annotated[
     Union[
         FinnedRocketBodySpec,
@@ -521,6 +573,7 @@ AssemblySpec = Annotated[
         BulkheadSpec,
         BodyTubeSpec,
         MountingPlateSpec,
+        StackAssemblySpec,
     ],
     Field(discriminator="assembly_type"),
 ]

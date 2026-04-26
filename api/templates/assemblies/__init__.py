@@ -19,6 +19,7 @@ from . import (
     planetary_gear,
     rack_and_pinion,
     shaft_coupling,
+    stack_assembly,
     universal_joint,
     worm_gear,
 )
@@ -43,6 +44,7 @@ _COMPOSERS = {
     "bulkhead":           bulkhead.compose,
     "body_tube":          body_tube.compose,
     "mounting_plate":     mounting_plate.compose,
+    "stack_assembly":     stack_assembly.compose,
 }
 
 

@@ -27,6 +27,7 @@ from .models import (
     PlanetaryGearSpec,
     RackAndPinionSpec,
     ShaftCouplingSpec,
+    StackAssemblySpec,
     UniversalJointSpec,
     WormGearSpec,
 )
@@ -53,6 +54,7 @@ _ALL_ASSEMBLY_TYPES = [
     "bulkhead",
     "body_tube",
     "mounting_plate",
+    "stack_assembly",
 ]
 
 
