@@ -9,7 +9,7 @@ export interface ModelIteration {
   id: string;
   timestamp: string;
   script: string;
-  script_language?: "openscad" | "cadquery";
+  script_language?: "openscad";
   reasoning: string;
   applied_lessons: string[];
   stl_base64?: string;
@@ -40,19 +40,16 @@ interface CadPanelProps {
   cadCode?: string | null;
   cadLoading?: boolean;
   onUpdateCad?: () => void;
-  onRunCadQuery?: () => void;
-  cadQueryLoading?: boolean;
   onRefine?: () => void;
   refineLoading?: boolean;
   modelIterations?: ModelIteration[];
   viewingVersionId?: string | null;
   onSelectVersion?: (id: string | null) => void;
   tabOverride?: Tab | null;
-  /** Pre-compiled STL from backend (CadQuery). Base64-encoded. */
+  /** Pre-compiled STL from backend. Base64-encoded. */
   stlBase64?: string | null;
-  /** STEP file from backend (CadQuery). Base64-encoded. */
+  /** STEP file from backend. Base64-encoded. */
   stepBase64?: string | null;
-  currentScriptLanguage?: "openscad" | "cadquery";
   onRunTemplate?: () => void;
   templateLoading?: boolean;
   /** Called when WASM compiles a template-generated model (success or failure). */
@@ -69,8 +66,6 @@ export default function CadPanel({
   cadCode,
   cadLoading = false,
   onUpdateCad,
-  onRunCadQuery,
-  cadQueryLoading = false,
   onRefine,
   refineLoading = false,
   modelIterations,
@@ -79,7 +74,6 @@ export default function CadPanel({
   tabOverride,
   stlBase64,
   stepBase64,
-  currentScriptLanguage = "openscad",
   onRunTemplate,
   templateLoading = false,
   onTemplateOutcome,
@@ -92,7 +86,6 @@ export default function CadPanel({
 }: CadPanelProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [code, setCode] = useState("");
-  const [scriptLanguage, setScriptLanguage] = useState<"openscad" | "cadquery">("openscad");
   const [pendingStlBase64, setPendingStlBase64] = useState<string | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
@@ -115,7 +108,6 @@ export default function CadPanel({
   useEffect(() => {
     if (cadCode == null) return;
     setCode(cadCode);
-    setScriptLanguage(currentScriptLanguage);
     compiledCodeRef.current = "";
     if (stlBase64) {
       setPendingStlBase64(stlBase64);
@@ -123,7 +115,7 @@ export default function CadPanel({
       setPendingStlBase64(null);
     }
     setTab("preview");
-  }, [cadCode, stlBase64, currentScriptLanguage]);
+  }, [cadCode, stlBase64]);
 
   useEffect(() => {
     if (tabOverride != null) setTab(tabOverride);
@@ -502,9 +494,9 @@ export default function CadPanel({
         }
       }
 
-      // If we have a pre-compiled STL from the backend (CadQuery), load it directly
+      // If we have a pre-compiled STL from the backend, load it directly
       if (pendingStlBase64) {
-        log("Loading pre-compiled STL from backend (CadQuery)...");
+        log("Loading pre-compiled STL from backend...");
         try {
           const binary = atob(pendingStlBase64);
           const bytes = new Uint8Array(binary.length);
@@ -520,10 +512,8 @@ export default function CadPanel({
       }
 
       const currentCode = codeRef.current;
-      if (currentCode && scriptLanguage === "openscad") {
+      if (currentCode) {
         compileAndRender(currentCode);
-      } else if (currentCode && scriptLanguage === "cadquery") {
-        log("CadQuery code — use backend compilation (click Update CadQuery)");
       } else {
         log("No code yet — paste or generate some");
       }
@@ -720,21 +710,6 @@ export default function CadPanel({
                 Refining...
               </>
             ) : "Opus Gen"}
-          </button>
-          <button
-            onClick={onRunCadQuery}
-            disabled={!onRunCadQuery || cadQueryLoading || cadLoading || refineLoading}
-            className="text-xs px-2.5 py-1 bg-orange-600 text-white rounded hover:bg-orange-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-          >
-            {cadQueryLoading ? (
-              <>
-                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                </svg>
-                CadQuery...
-              </>
-            ) : "CadQuery"}
           </button>
           <button
             onClick={onRunTemplate}

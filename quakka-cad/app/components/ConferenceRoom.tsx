@@ -47,11 +47,8 @@ interface ConferenceRoomProps {
   viewingVersionId?: string | null;
   onSelectVersion?: (id: string | null) => void;
   cadTabOverride?: "code" | "preview" | "fea" | "drawing" | null;
-  onRunCadQuery?: () => void;
-  cadQueryLoading?: boolean;
   stlBase64?: string | null;
   stepBase64?: string | null;
-  currentScriptLanguage?: "openscad" | "cadquery";
   onRunTemplate?: () => void;
   templateLoading?: boolean;
   onTemplateOutcome?: (success: boolean, error?: string) => void;
@@ -90,11 +87,8 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
     viewingVersionId,
     onSelectVersion,
     cadTabOverride,
-    onRunCadQuery,
-    cadQueryLoading,
     stlBase64,
     stepBase64,
-    currentScriptLanguage,
     onRunTemplate,
     templateLoading,
     onTemplateOutcome,
@@ -220,11 +214,8 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
               viewingVersionId={viewingVersionId}
               onSelectVersion={onSelectVersion}
               tabOverride={cadTabOverride}
-              onRunCadQuery={onRunCadQuery}
-              cadQueryLoading={cadQueryLoading}
               stlBase64={stlBase64}
               stepBase64={stepBase64}
-              currentScriptLanguage={currentScriptLanguage}
               onRunTemplate={onRunTemplate}
               templateLoading={templateLoading}
               onTemplateOutcome={onTemplateOutcome}
