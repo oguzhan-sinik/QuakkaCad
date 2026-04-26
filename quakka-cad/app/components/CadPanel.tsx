@@ -9,7 +9,7 @@ export interface ModelIteration {
   id: string;
   timestamp: string;
   script: string;
-  script_language?: "openscad" | "cadquery";
+  script_language?: "openscad";
   reasoning: string;
   applied_lessons: string[];
   stl_base64?: string;
