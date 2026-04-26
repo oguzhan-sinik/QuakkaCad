@@ -5,7 +5,7 @@ import type { Peer } from "../lib/useConference";
 import AttendeeList from "./AttendeeList";
 import ControlBar from "./ControlBar";
 import TranscriptPanel from "./TranscriptPanel";
-import CadPanel, { type ModelIteration } from "./CadPanel";
+import CadPanel, { type ModelIteration, type FEAAnalysisData, type TechnicalDrawingData } from "./CadPanel";
 import PlanSidebar, { type PlanBlock } from "./PlanSidebar";
 
 interface TranscriptLine {
@@ -46,7 +46,20 @@ interface ConferenceRoomProps {
   modelIterations?: ModelIteration[];
   viewingVersionId?: string | null;
   onSelectVersion?: (id: string | null) => void;
-  cadTabOverride?: "code" | "preview" | null;
+  cadTabOverride?: "code" | "preview" | "fea" | "drawing" | null;
+  onRunCadQuery?: () => void;
+  cadQueryLoading?: boolean;
+  stlBase64?: string | null;
+  stepBase64?: string | null;
+  currentScriptLanguage?: "openscad" | "cadquery";
+  onRunTemplate?: () => void;
+  templateLoading?: boolean;
+  onRunFEA?: () => void;
+  feaLoading?: boolean;
+  feaData?: FEAAnalysisData | null;
+  onRunDrawing?: () => void;
+  drawingLoading?: boolean;
+  drawingData?: TechnicalDrawingData | null;
 }
 
 export default function ConferenceRoom(props: ConferenceRoomProps) {
@@ -76,6 +89,19 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
     viewingVersionId,
     onSelectVersion,
     cadTabOverride,
+    onRunCadQuery,
+    cadQueryLoading,
+    stlBase64,
+    stepBase64,
+    currentScriptLanguage,
+    onRunTemplate,
+    templateLoading,
+    onRunFEA,
+    feaLoading,
+    feaData,
+    onRunDrawing,
+    drawingLoading,
+    drawingData,
   } = props;
 
   const [leftWidth, setLeftWidth] = useState(20);
@@ -192,6 +218,19 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
               viewingVersionId={viewingVersionId}
               onSelectVersion={onSelectVersion}
               tabOverride={cadTabOverride}
+              onRunCadQuery={onRunCadQuery}
+              cadQueryLoading={cadQueryLoading}
+              stlBase64={stlBase64}
+              stepBase64={stepBase64}
+              currentScriptLanguage={currentScriptLanguage}
+              onRunTemplate={onRunTemplate}
+              templateLoading={templateLoading}
+              onRunFEA={onRunFEA}
+              feaLoading={feaLoading}
+              feaData={feaData}
+              onRunDrawing={onRunDrawing}
+              drawingLoading={drawingLoading}
+              drawingData={drawingData}
             />
           </div>
         </div>

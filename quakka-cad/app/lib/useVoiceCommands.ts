@@ -12,6 +12,7 @@ export interface VoiceCommandDef {
 interface TranscriptLine {
   id: string;
   text: string;
+  isChat?: boolean;
 }
 
 function tokenize(text: string): Set<string> {
@@ -58,6 +59,8 @@ export function useVoiceCommands(
     const now = Date.now();
 
     for (let i = processedCountRef.current; i < lines.length; i++) {
+      // Skip typed chat messages — voice commands are for spoken input only
+      if (lines[i].isChat) continue;
       const lineTokens = tokenize(lines[i].text);
 
       for (const cmd of commands) {

@@ -88,7 +88,8 @@ class ModelDelta(BaseModel):
 class ModelIteration(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    script: str = Field(min_length=10, description="Raw, valid OpenSCAD code. No markdown formatting.")
+    script: str = Field(min_length=10, description="Raw code (OpenSCAD or CadQuery Python)")
+    script_language: Literal["openscad", "cadquery"] = Field(default="openscad")
     reasoning: str = Field(description="Agent's justification for geometric decisions in this version")
     applied_lessons: List[str] = Field(default_factory=list, description="MuBit memory utilised")
     delta: Optional[ModelDelta] = Field(default=None, description="What changed from the previous iteration")
@@ -124,8 +125,31 @@ class PlanBlockCreate(BaseModel):
 
 class ModelIterationCreate(BaseModel):
     script: str = Field(min_length=10)
+    script_language: Literal["openscad", "cadquery"] = Field(default="openscad")
     reasoning: str
     applied_lessons: List[str] = Field(default_factory=list)
+
+
+class FEAAnalysis(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    model_iteration_id: UUID = Field(description="Which model iteration was analysed")
+    summary: str = Field(description="High-level summary of structural findings")
+    stress_points: List[str] = Field(default_factory=list, description="Identified stress concentration areas")
+    recommendations: List[str] = Field(default_factory=list, description="Design improvement suggestions")
+    material_notes: str = Field(default="", description="Material-specific observations")
+    safety_factor: Optional[float] = Field(default=None, description="Estimated safety factor if determinable")
+    load_cases: List[str] = Field(default_factory=list, description="Load scenarios considered")
+    full_report: str = Field(description="Detailed FEA-style analysis report in markdown")
+    stress_script: str = Field(default="", description="OpenSCAD script with colour heat-map showing stress regions")
+
+
+class TechnicalDrawing(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    model_iteration_id: UUID = Field(description="Which model iteration the drawing is for")
+    image_url: str = Field(description="URL of the generated technical drawing image")
+    prompt_used: str = Field(description="The prompt sent to the image model")
 
 
 class MeetingState(BaseModel):

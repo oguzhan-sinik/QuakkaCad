@@ -12,15 +12,20 @@ from pydantic import BaseModel
 import logging
 
 from agents import (
+    run_cadquery_fix,
+    run_cadquery_meeting,
+    run_fea_analysis,
     run_openscad_edit,
     run_openscad_fix,
     run_openscad_meeting,
     run_openscad_refine,
     run_planner_chunked,
 )
+from cadquery_compiler import compile_cadquery
 from mubit_client import record_generation_outcome, reflect_on_session
 from openscad_compiler import compile_openscad
 from schemas import (
+    FEAAnalysis,
     Meeting,
     MeetingCreate,
     MeetingState,
@@ -29,6 +34,7 @@ from schemas import (
     ModelIterationCreate,
     PlanBlock,
     PlanBlockCreate,
+    TechnicalDrawing,
     TranscriptEntry,
     TranscriptEntryCreate,
 )
@@ -491,3 +497,297 @@ async def trigger_refine(
         meeting_id, fix_iterations, compile_ok,
     )
     return OpenSCADResult(iteration=iteration, meta=meta)
+
+
+# ---------------------------------------------------------------------------
+# CadQuery Model Generation
+# ---------------------------------------------------------------------------
+
+
+@router.post("/meetings/{meeting_id}/agent/cadquery", response_model=OpenSCADResult, tags=["agents"])
+async def trigger_cadquery(
+    meeting_id: UUID,
+    max_fix_iterations: int = Query(default=3, ge=0, le=5),
+):
+    """Run the CadQuery Agent (Anthropic), compile, export STEP+STL, iterate fixes."""
+    _get_meeting_or_404(meeting_id)
+
+    current_blocks = store.blocks[meeting_id]
+    full_transcript = store.transcripts[meeting_id]
+
+    try:
+        iteration_create, meta = await run_cadquery_meeting(
+            transcript=full_transcript,
+            blocks=current_blocks,
+        )
+    except asyncio.CancelledError:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"CadQuery agent error: {e}")
+
+    # --- Compile + fix loop on backend ---
+    compile_ok: bool | None = None
+    compile_stderr: str | None = None
+    stl_bytes: bytes | None = None
+    step_bytes: bytes | None = None
+    fix_iterations = 0
+    script = iteration_create.script
+
+    for attempt in range(max_fix_iterations + 1):
+        try:
+            cq_result = await compile_cadquery(script)
+            compile_ok = cq_result.success
+            compile_stderr = cq_result.stderr or None
+            stl_bytes = cq_result.stl_bytes
+            step_bytes = cq_result.step_bytes
+            if cq_result.success:
+                break
+            if attempt < max_fix_iterations:
+                fixed, _ = await run_cadquery_fix(current_script=script, stderr=cq_result.stderr)
+                fix_iterations += 1
+                script = fixed
+        except Exception as e:
+            logger.warning("CadQuery compile error: %s", e)
+            compile_ok = False
+            compile_stderr = str(e)
+            break
+
+    iteration_create = ModelIterationCreate(
+        script=script,
+        script_language="cadquery",
+        reasoning=iteration_create.reasoning,
+        applied_lessons=iteration_create.applied_lessons,
+    )
+
+    delta = ModelDelta(changed_block_ids=[], edits=[], is_full_regen=True)
+    iteration = ModelIteration(
+        **iteration_create.model_dump(),
+        delta=delta,
+        compile_ok=compile_ok,
+        compile_stderr=compile_stderr,
+        fix_iterations=fix_iterations,
+    )
+    store.models[meeting_id].append(iteration)
+
+    meta["compile_ok"] = compile_ok
+    meta["fix_iterations"] = fix_iterations
+
+    import base64
+    # STL for 3D preview
+    if stl_bytes:
+        meta["stl_base64"] = base64.b64encode(stl_bytes).decode()
+    # STEP for engineering download
+    if step_bytes:
+        meta["step_base64"] = base64.b64encode(step_bytes).decode()
+
+    logger.info(
+        "CadQuery generation complete for meeting %s: %d fix attempt(s), compile_ok=%s, STEP=%d bytes",
+        meeting_id, fix_iterations, compile_ok, len(step_bytes) if step_bytes else 0,
+    )
+    return OpenSCADResult(iteration=iteration, meta=meta)
+
+
+# ---------------------------------------------------------------------------
+# FEA Analysis
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Template Pipeline (Composable Mechanical Parts)
+# ---------------------------------------------------------------------------
+
+
+class TemplateRequest(BaseModel):
+    prompt: str
+
+
+@router.post("/meetings/{meeting_id}/agent/template", tags=["agents"])
+async def trigger_template(meeting_id: UUID, body: TemplateRequest):
+    """Fast template-based generation via Cerebras. Target: <8s e2e."""
+    from templates.render import render_from_prompt
+
+    _get_meeting_or_404(meeting_id)
+
+    try:
+        spec, scad_source, meta = await render_from_prompt(body.prompt)
+    except Exception as e:
+        logger.error("Template pipeline error: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Template pipeline error: {e}")
+
+    iteration_create = ModelIterationCreate(
+        script=scad_source,
+        script_language="openscad",
+        reasoning=f"Template: {spec.assembly_type} — {spec.reasoning}",
+        applied_lessons=[],
+    )
+
+    delta = ModelDelta(changed_block_ids=[], edits=[], is_full_regen=True)
+    iteration = ModelIteration(
+        **iteration_create.model_dump(),
+        delta=delta,
+        compile_ok=None,  # frontend WASM compiles
+        compile_stderr=None,
+        fix_iterations=0,
+    )
+    store.models[meeting_id].append(iteration)
+
+    logger.info(
+        "Template generation complete for meeting %s: %s, %.0fms",
+        meeting_id, spec.assembly_type, meta.get("latency_ms", 0),
+    )
+    return OpenSCADResult(iteration=iteration, meta=meta)
+
+
+class FEAResult(BaseModel):
+    analysis: FEAAnalysis
+    meta: dict
+
+
+@router.post("/meetings/{meeting_id}/agent/fea", response_model=FEAResult, tags=["agents"])
+async def trigger_fea_analysis(meeting_id: UUID):
+    """Run FEA-style structural analysis on the latest model iteration."""
+    _get_meeting_or_404(meeting_id)
+
+    current_models = store.models[meeting_id]
+    if not current_models:
+        raise HTTPException(status_code=400, detail="No model iterations yet — generate a 3D model first")
+
+    latest_model = current_models[-1]
+    current_blocks = store.blocks[meeting_id]
+
+    try:
+        analysis_dict, meta = await run_fea_analysis(
+            script=latest_model.script,
+            blocks=current_blocks,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"FEA agent error: {e}")
+
+    analysis = FEAAnalysis(
+        model_iteration_id=latest_model.id,
+        summary=analysis_dict.get("summary", ""),
+        stress_points=analysis_dict.get("stress_points", []),
+        recommendations=analysis_dict.get("recommendations", []),
+        material_notes=analysis_dict.get("material_notes", ""),
+        safety_factor=analysis_dict.get("safety_factor"),
+        load_cases=analysis_dict.get("load_cases", []),
+        full_report=analysis_dict.get("full_report", ""),
+        stress_script=analysis_dict.get("stress_script", ""),
+    )
+
+    logger.info("FEA analysis complete for meeting %s, model %s", meeting_id, latest_model.id)
+    return FEAResult(analysis=analysis, meta=meta)
+
+
+# ---------------------------------------------------------------------------
+# Technical Drawing (fal.ai gpt-image-2)
+# ---------------------------------------------------------------------------
+
+
+class TechnicalDrawingResult(BaseModel):
+    drawing: TechnicalDrawing
+    meta: dict
+
+
+@router.post("/meetings/{meeting_id}/agent/drawing", tags=["agents"])
+async def trigger_technical_drawing(meeting_id: UUID):
+    """Generate a technical drawing using fal.ai gpt-image-2 based on the latest model."""
+    import os
+    import time
+
+    import httpx
+
+    _get_meeting_or_404(meeting_id)
+
+    fal_key = os.getenv("FAL_KEY", "")
+    if not fal_key:
+        raise HTTPException(status_code=500, detail="FAL_KEY is not set. Add it to api/.env")
+
+    current_models = store.models[meeting_id]
+    if not current_models:
+        raise HTTPException(status_code=400, detail="No model iterations yet — generate a 3D model first")
+
+    latest_model = current_models[-1]
+    current_blocks = store.blocks[meeting_id]
+
+    try:
+        # Build a description from plan blocks for the drawing prompt
+        block_descriptions = []
+        for b in current_blocks:
+            try:
+                c = b.content
+                if c.block_type == "objective":
+                    block_descriptions.append(f"Goal: {c.goal_statement}")
+                elif c.block_type == "variable":
+                    block_descriptions.append(f"{c.parameter_name}: {c.value} {c.unit}")
+                elif c.block_type == "decision":
+                    block_descriptions.append(f"Decision: {c.final_choice}")
+            except Exception:
+                pass
+
+        design_desc = "; ".join(block_descriptions) if block_descriptions else "parametric 3D enclosure"
+
+        prompt = (
+            f"Technical engineering drawing with precise dimensions, orthographic projection views "
+            f"(front, side, top), section views, and dimension annotations. "
+            f"Professional drafting style on white background with thin black lines. "
+            f"ISO standard technical drawing format. "
+            f"The object: {design_desc}. "
+            f"Show all critical dimensions in millimeters, include a title block, "
+            f"scale reference, and standard engineering drawing annotations."
+        )
+
+        t0 = time.perf_counter()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
+            resp = await client.post(
+                "https://fal.run/openai/gpt-image-2",
+                headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
+                json={"prompt": prompt},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+        latency_ms = (time.perf_counter() - t0) * 1000
+
+        # fal.ai gpt-image-2 response may vary in structure
+        logger.info("fal.ai response keys: %s", list(result.keys()))
+        images = (
+            result.get("images")
+            or result.get("output", {}).get("images", [])
+            or result.get("data", [])
+        )
+        if not images:
+            raise HTTPException(
+                status_code=502,
+                detail=f"fal.ai returned no images. Response: {str(result)[:500]}",
+            )
+
+        first = images[0]
+        image_url = first.get("url", "") if isinstance(first, dict) else str(first)
+
+        drawing = TechnicalDrawing(
+            model_iteration_id=latest_model.id,
+            image_url=image_url,
+            prompt_used=prompt,
+        )
+
+        meta = {
+            "provider": "fal.ai / gpt-image-2",
+            "latency_ms": round(latency_ms, 1),
+        }
+
+        logger.info("Technical drawing generated for meeting %s, model %s", meeting_id, latest_model.id)
+        return {"drawing": drawing.model_dump(mode="json"), "meta": meta}
+
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        logger.error("fal.ai HTTP error: %s %s", e.response.status_code, e.response.text[:500])
+        raise HTTPException(status_code=502, detail=f"fal.ai error: {e.response.status_code} {e.response.text[:300]}")
+    except Exception as e:
+        logger.error("Drawing endpoint unhandled error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Drawing generation failed: {e}")

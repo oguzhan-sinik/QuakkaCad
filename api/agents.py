@@ -249,6 +249,197 @@ Rules:
 - applied_lessons: note any CAD heuristics applied (e.g. tolerances, printability)\
 """
 
+FEA_ANALYSIS_SYSTEM_PROMPT = """\
+You are a senior mechanical / structural engineer performing a Finite Element Analysis \
+(FEA) review of a 3D CAD model described in OpenSCAD code.
+
+Given the OpenSCAD script and its design plan blocks, produce:
+1. A thorough engineering analysis report
+2. A MODIFIED OpenSCAD script that visualises stress as a colour heat-map directly on the 3D geometry
+
+COLOUR HEAT-MAP RULES for the visualisation script:
+- Use color() calls on EVERY geometric primitive / module call to show stress levels
+- color([1,0,0]) = RED = high stress (stress concentrators, thin walls near holes, sharp corners)
+- color([1,0.65,0]) = ORANGE = medium-high stress
+- color([1,1,0]) = YELLOW = medium stress
+- color([0.5,1,0]) = LOW-MEDIUM stress
+- color([0,0.8,0]) = GREEN = low stress (bulk material, well-supported areas)
+- Break the original geometry into sub-regions where needed to apply different colours
+- The script MUST be valid, compilable OpenSCAD — no markdown fences, no prose in the script
+- Preserve all original dimensions and geometry — only add/change color() calls
+- Add a comment legend at the top: // FEA STRESS HEAT MAP — Red=High, Orange=Med-High, Yellow=Med, Green=Low
+
+Your analysis MUST cover:
+1. Stress Analysis: stress concentration points, Von Mises stress peaks
+2. Load Cases: realistic scenarios (gravity, handling, stacking, thermal, insertion forces)
+3. Material Considerations: yield strength, layer adhesion, print orientation
+4. Safety Factor: estimated numeric factor
+5. Failure Modes: buckling, fatigue, creep, delamination, brittle fracture
+6. Design Recommendations: actionable fixes (fillets, thickness, ribs, orientation)
+
+Output a JSON object with these exact keys:
+  "summary": string (2-3 sentence overview)
+  "stress_points": array of strings (location + criticality)
+  "recommendations": array of strings (actionable fixes)
+  "material_notes": string
+  "safety_factor": number or null
+  "load_cases": array of strings
+  "full_report": string (detailed markdown, 500-1000 words)
+  "stress_script": string (the COMPLETE modified OpenSCAD script with colour heat-map)
+"""
+
+_fea_agents: dict[str, Any] = {}
+
+
+def _get_fea_agent(provider: str) -> Agent:
+    if provider not in _fea_agents:
+        cfg = PROVIDER_CONFIG[provider]
+        _fea_agents[provider] = Agent(
+            cfg["model"],
+            system_prompt=_system_prompt(provider, FEA_ANALYSIS_SYSTEM_PROMPT),
+            output_type=str,
+            retries=1,
+        )
+    return _fea_agents[provider]
+
+
+# ---------------------------------------------------------------------------
+# CadQuery system prompts
+# ---------------------------------------------------------------------------
+
+CADQUERY_MEETING_SYSTEM_PROMPT = """\
+You are the MuBit CadQuery Agent. Generate valid, executable Python code using \
+CadQuery to create a 3D model based on the project's plan blocks.
+
+Output ONLY raw Python code — no markdown fences, no prose.
+
+STRICT RULES:
+- The ONLY import allowed is: import cadquery as cq
+- Do NOT import numpy, sys, os, math or any other module. Use Python builtins for math.
+- Do NOT add install checks, try/except around imports, or print statements
+- Do NOT add if __name__ == "__main__" blocks
+- Declare all parametric dimensions as variables at the top of the file
+- Pull exact values from LOCKED variable blocks; use commented defaults for unlocked ones
+- Assign the final Workplane object to a variable called `result`
+- Use CadQuery operations: .box(), .cylinder(), .sphere(), .hole(), .fillet(), .chamfer(), .shell()
+- Use .union(), .cut(), .intersect() for Boolean operations
+- Use .translate(), .rotate() for positioning
+- For circles/arcs use math: 3.14159 instead of math.pi
+- For arrays of parts, use Python list comprehension + .union() in a loop
+
+Example of CORRECT CadQuery code:
+```
+import cadquery as cq
+
+# Parameters
+length = 100
+width = 60
+height = 40
+wall = 3
+fillet_r = 2
+
+# Main body - hollow box
+body = (cq.Workplane("XY")
+    .box(length, width, height)
+    .edges("|Z").fillet(fillet_r)
+    .shell(-wall))
+
+# Mounting holes
+body = (body.faces(">Z").workplane()
+    .rect(length - 10, width - 10, forConstruction=True)
+    .vertices()
+    .hole(3.2))
+
+result = body
+```
+
+- reasoning must explain your geometric decisions
+- applied_lessons: list specific CAD heuristics or past compilation errors avoided
+"""
+
+CADQUERY_EDIT_SYSTEM_PROMPT = """\
+You are the MuBit CadQuery Edit Agent. Given an existing valid CadQuery Python script \
+and a set of changed plan blocks, return a minimal list of search-and-replace edits.
+
+Rules:
+- Prefer updating variable declarations at the top (e.g. board_length = 102 → board_length = 110)
+- Only touch geometry when a decision or objective block explicitly changed the form factor
+- Each search string must match exactly one location in the script
+- Do not rewrite the whole file — only the minimum edits to reflect the changed blocks
+- reasoning must cite which blocks drove each edit
+- applied_lessons: list specific CAD heuristics or past compilation errors avoided
+"""
+
+CADQUERY_FIX_SYSTEM_PROMPT = """\
+You are the MuBit CadQuery Fix Agent. Given a CadQuery Python script and its error \
+output (traceback), return a corrected version of the complete script.
+
+Output ONLY raw Python code — no markdown fences, no prose, no explanation.
+
+Rules:
+- Fix exactly what the error describes — do not change anything else
+- The ONLY import allowed is: import cadquery as cq
+- Do NOT import numpy, sys, os, math or any other module
+- Do NOT add install checks or try/except around imports
+- Preserve all variable names, comments, and structure outside the error sites
+- The final result MUST be assigned to a variable called `result`
+- Common CadQuery pitfalls to watch for:
+  - .val() vs .vals() confusion
+  - Workplane chaining errors
+  - Selector string syntax (">Z", "<X", etc.)
+  - fillet/chamfer on edges that don't exist
+  - translate() takes a tuple, not separate args: .translate((x, y, z))
+"""
+
+CADQUERY_REFINE_SYSTEM_PROMPT = """\
+You are a senior mechanical CAD engineer with deep knowledge of parametric 3D design \
+using CadQuery. You are given design plan blocks and optionally a previous draft script.
+
+Your task: produce a high-quality, fully executable, clean parametric CadQuery model.
+
+Rules:
+- Start with: import cadquery as cq
+- Ignore plan blocks unrelated to physical geometry
+- Focus on: objective blocks (form factor), variable blocks (dimensions), decision blocks \
+  (geometry choices such as mounting holes, chamfers, wall thickness)
+- Declare ALL numeric parameters as named variables at the top of the file
+- Use proper CadQuery operations and Boolean ops
+- Add # TODO comments for any missing_info blocks (substitute sensible defaults)
+- Assign the final result to a variable called `result`
+- reasoning must explain every significant geometric decision made
+- applied_lessons: note any CAD heuristics applied
+"""
+
+_cadquery_meeting_agents: dict[str, Any] = {}
+_cadquery_edit_agents: dict[str, Any] = {}
+_cadquery_fix_agents: dict[str, Any] = {}
+_cadquery_refine_agents: dict[str, Any] = {}
+
+
+def _get_cadquery_meeting_agent(provider: str) -> Agent:
+    if provider not in _cadquery_meeting_agents:
+        cfg = PROVIDER_CONFIG[provider]
+        _cadquery_meeting_agents[provider] = Agent(
+            cfg["model"],
+            system_prompt=_system_prompt(provider, CADQUERY_MEETING_SYSTEM_PROMPT),
+            output_type=ModelIterationCreate,
+            retries=1,
+        )
+    return _cadquery_meeting_agents[provider]
+
+
+def _get_cadquery_fix_agent(provider: str) -> Agent:
+    if provider not in _cadquery_fix_agents:
+        cfg = PROVIDER_CONFIG[provider]
+        _cadquery_fix_agents[provider] = Agent(
+            cfg["model"],
+            system_prompt=_system_prompt(provider, CADQUERY_FIX_SYSTEM_PROMPT),
+            output_type=str,
+            retries=1,
+        )
+    return _cadquery_fix_agents[provider]
+
+
 _OPENSCAD_NOISE = re.compile(
     r"^(Could not initialize|WARNING: could not initialize|Application path is|"
     r"Converted \d+ warning|QtCore|QStandardPaths|QFactoryLoader|ALSA)",
@@ -279,6 +470,12 @@ PROVIDER_CONFIG: dict[str, dict] = {
         "model": "gateway/anthropic:claude-opus-4-7",
         "model_name": "claude-opus-4-7",
         "label": "Pydantic Gateway / Anthropic (Claude Opus 4.7)",
+        "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
+    },
+    "cerebras": {
+        "model": "gateway/cerebras:qwen-3-235b-a22b-instruct-2507",
+        "model_name": "qwen-3-235b-a22b-instruct-2507",
+        "label": "Pydantic Gateway / Cerebras (Qwen 3 235B)",
         "key_env": "PYDANTIC_AI_GATEWAY_API_KEY",
     },
 }
@@ -880,7 +1077,7 @@ async def run_openscad_refine(
     previous_compile_ok: bool | None = None,
     previous_compile_stderr: str | None = None,
 ) -> tuple[ModelIterationCreate, dict]:
-    """Use Claude Opus with adaptive extended thinking to produce a high-quality OpenSCAD model.
+    """Use Claude Sonnet with adaptive extended thinking to produce a high-quality OpenSCAD model.
 
     Returns (iteration_create, meta).
     """
@@ -921,7 +1118,7 @@ async def run_openscad_refine(
     if mubit_context:
         prompt = f"LESSONS FROM PAST REFINEMENTS:\n{mubit_context}\n\n" + prompt
 
-    # Opus 4.7: adaptive thinking + xhigh effort; temperature disallowed
+    # Sonnet 4.6: adaptive thinking + low effort; temperature disallowed
     model_settings = AnthropicModelSettings(
         max_tokens=max_tokens,
         anthropic_thinking={"type": "adaptive"},
@@ -942,3 +1139,124 @@ async def run_openscad_refine(
     meta = _build_meta(cfg, latency_ms, result.usage())
     meta["session_id"] = session_id
     return result.output, meta
+
+
+async def run_fea_analysis(
+    script: str,
+    blocks: list[PlanBlock],
+    provider: str = "groq",
+    max_tokens: int = 16384,
+) -> tuple[dict, dict]:
+    """Run FEA-style structural analysis on an OpenSCAD script.
+
+    Returns (analysis_dict with stress_script, meta).
+    """
+    _require_key(provider)
+    cfg = PROVIDER_CONFIG[provider]
+    agent = _get_fea_agent(provider)
+
+    blocks_text = (
+        "\n".join(b.model_dump_json() for b in blocks) if blocks else "(no blocks)"
+    )
+    prompt = (
+        f"OPENSCAD SCRIPT:\n{script}\n\n"
+        f"DESIGN PLAN BLOCKS:\n{blocks_text}\n\n"
+        "Perform a thorough FEA-style structural analysis. Return the JSON with "
+        "both the report fields AND the stress_script (colour heat-mapped OpenSCAD)."
+    )
+
+    t0 = time.perf_counter()
+    result = await asyncio.wait_for(
+        agent.run(prompt, model_settings=_model_settings(provider, 0.3, max_tokens)),
+        timeout=180,
+    )
+    latency_ms = (time.perf_counter() - t0) * 1000
+
+    raw = _strip_markdown_fences(_strip_think_blocks(result.output)).strip()
+    try:
+        analysis = json.loads(raw)
+    except json.JSONDecodeError:
+        # LLMs often put literal newlines/tabs inside JSON string values — fix them
+        # Replace unescaped control characters inside JSON strings
+        def _fix_json_strings(s: str) -> str:
+            # Replace literal newlines/tabs that aren't already escaped
+            s = s.replace("\\\n", "\\n")  # preserve already-escaped
+            s = s.replace("\n", "\\n")
+            s = s.replace("\\\t", "\\t")
+            s = s.replace("\t", "\\t")
+            s = s.replace("\r", "\\r")
+            return s
+        try:
+            analysis = json.loads(_fix_json_strings(raw))
+        except json.JSONDecodeError as e2:
+            raise RuntimeError(f"FEA analysis JSON parse failed: {e2}\nRaw: {raw[:500]}")
+
+    return analysis, _build_meta(cfg, latency_ms, result.usage())
+
+
+# ---------------------------------------------------------------------------
+# CadQuery runner functions
+# ---------------------------------------------------------------------------
+
+
+async def run_cadquery_meeting(
+    transcript: list[TranscriptEntry],
+    blocks: list[PlanBlock],
+    provider: str = "anthropic",
+    temperature: float = 0.5,
+    max_tokens: int = 8192,
+) -> tuple[ModelIterationCreate, dict]:
+    _require_key(provider)
+    cfg = PROVIDER_CONFIG[provider]
+    agent = _get_cadquery_meeting_agent(provider)
+
+    blocks_text = (
+        "\n".join(b.model_dump_json() for b in blocks)
+        if blocks
+        else "(no blocks — generate a minimal parametric enclosure)"
+    )
+    recent_transcript = "\n".join(
+        f"[{e.start_time:.1f}s] {e.text}" for e in transcript[-20:]
+    ) or "(none)"
+
+    prompt = (
+        f"PLAN BLOCKS:\n{blocks_text}\n\n"
+        f"RECENT TRANSCRIPT:\n{recent_transcript}\n\n"
+        "Generate a complete, executable CadQuery Python script for this design."
+    )
+
+    t0 = time.perf_counter()
+    result = await asyncio.wait_for(
+        agent.run(prompt, model_settings=_model_settings(provider, temperature, max_tokens)),
+        timeout=240,
+    )
+    latency_ms = (time.perf_counter() - t0) * 1000
+
+    return result.output, _build_meta(cfg, latency_ms, result.usage())
+
+
+async def run_cadquery_fix(
+    current_script: str,
+    stderr: str,
+    provider: str = "anthropic",
+    max_tokens: int = 8192,
+) -> tuple[str, dict]:
+    _require_key(provider)
+    cfg = PROVIDER_CONFIG[provider]
+    agent = _get_cadquery_fix_agent(provider)
+
+    prompt = (
+        f"CURRENT SCRIPT:\n{current_script}\n\n"
+        f"ERROR OUTPUT:\n{stderr}\n\n"
+        "Return the complete corrected CadQuery Python script."
+    )
+
+    t0 = time.perf_counter()
+    result = await asyncio.wait_for(
+        agent.run(prompt, model_settings=_model_settings(provider, 0.2, max_tokens)),
+        timeout=120,
+    )
+    latency_ms = (time.perf_counter() - t0) * 1000
+
+    fixed = _strip_markdown_fences(result.output).strip()
+    return fixed, _build_meta(cfg, latency_ms, result.usage())

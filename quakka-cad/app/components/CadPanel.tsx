@@ -3,41 +3,91 @@
 import { useEffect, useRef, useState } from "react";
 import { useGestureControls } from "../hooks/useGestureControls";
 
-type Tab = "code" | "preview";
+type Tab = "code" | "preview" | "fea" | "drawing";
 
 export interface ModelIteration {
   id: string;
   timestamp: string;
   script: string;
+  script_language?: "openscad" | "cadquery";
   reasoning: string;
   applied_lessons: string[];
+  stl_base64?: string;
+}
+
+export interface FEAAnalysisData {
+  id: string;
+  summary: string;
+  stress_points: string[];
+  recommendations: string[];
+  material_notes: string;
+  safety_factor: number | null;
+  load_cases: string[];
+  full_report: string;
+  stress_script: string;
+}
+
+export interface TechnicalDrawingData {
+  id: string;
+  image_url: string;
+  prompt_used: string;
 }
 
 interface CadPanelProps {
   cadCode?: string | null;
   cadLoading?: boolean;
   onUpdateCad?: () => void;
+  onRunCadQuery?: () => void;
+  cadQueryLoading?: boolean;
   onRefine?: () => void;
   refineLoading?: boolean;
   modelIterations?: ModelIteration[];
   viewingVersionId?: string | null;
   onSelectVersion?: (id: string | null) => void;
-  tabOverride?: "code" | "preview" | null;
+  tabOverride?: Tab | null;
+  /** Pre-compiled STL from backend (CadQuery). Base64-encoded. */
+  stlBase64?: string | null;
+  /** STEP file from backend (CadQuery). Base64-encoded. */
+  stepBase64?: string | null;
+  currentScriptLanguage?: "openscad" | "cadquery";
+  onRunTemplate?: () => void;
+  templateLoading?: boolean;
+  onRunFEA?: () => void;
+  feaLoading?: boolean;
+  feaData?: FEAAnalysisData | null;
+  onRunDrawing?: () => void;
+  drawingLoading?: boolean;
+  drawingData?: TechnicalDrawingData | null;
 }
 
 export default function CadPanel({
   cadCode,
   cadLoading = false,
   onUpdateCad,
+  onRunCadQuery,
+  cadQueryLoading = false,
   onRefine,
   refineLoading = false,
   modelIterations,
   viewingVersionId,
   onSelectVersion,
   tabOverride,
+  stlBase64,
+  stepBase64,
+  currentScriptLanguage = "openscad",
+  onRunTemplate,
+  templateLoading = false,
+  onRunFEA,
+  feaLoading = false,
+  feaData,
+  onRunDrawing,
+  drawingLoading = false,
+  drawingData,
 }: CadPanelProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [code, setCode] = useState("");
+  const [scriptLanguage, setScriptLanguage] = useState<"openscad" | "cadquery">("openscad");
+  const [pendingStlBase64, setPendingStlBase64] = useState<string | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
 
@@ -55,9 +105,15 @@ export default function CadPanel({
   useEffect(() => {
     if (cadCode == null) return;
     setCode(cadCode);
+    setScriptLanguage(currentScriptLanguage);
     compiledCodeRef.current = "";
+    if (stlBase64) {
+      setPendingStlBase64(stlBase64);
+    } else {
+      setPendingStlBase64(null);
+    }
     setTab("preview");
-  }, [cadCode]);
+  }, [cadCode, stlBase64, currentScriptLanguage]);
 
   useEffect(() => {
     if (tabOverride != null) setTab(tabOverride);
@@ -429,9 +485,27 @@ export default function CadPanel({
         }
       }
 
+      // If we have a pre-compiled STL from the backend (CadQuery), load it directly
+      if (pendingStlBase64) {
+        log("Loading pre-compiled STL from backend (CadQuery)...");
+        try {
+          const binary = atob(pendingStlBase64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          loadSTL(bytes.buffer);
+          compiledCodeRef.current = codeRef.current;
+        } catch (e: any) {
+          log(`STL decode error: ${e.message}`);
+        }
+        setPendingStlBase64(null);
+        return;
+      }
+
       const currentCode = codeRef.current;
-      if (currentCode) {
+      if (currentCode && scriptLanguage === "openscad") {
         compileAndRender(currentCode);
+      } else if (currentCode && scriptLanguage === "cadquery") {
+        log("CadQuery code — use backend compilation (click Update CadQuery)");
       } else {
         log("No code yet — paste or generate some");
       }
@@ -439,7 +513,7 @@ export default function CadPanel({
 
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, code]);
+  }, [tab, code, pendingStlBase64]);
 
   // Resize on window resize
   useEffect(() => {
@@ -538,6 +612,26 @@ export default function CadPanel({
         >
           3D Preview
         </button>
+        <button
+          onClick={() => setTab("fea")}
+          className={`px-4 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+            tab === "fea"
+              ? "text-white border-b-2 border-emerald-500"
+              : "text-zinc-500 hover:text-zinc-300"
+          }`}
+        >
+          FEA Analysis
+        </button>
+        <button
+          onClick={() => setTab("drawing")}
+          className={`px-4 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+            tab === "drawing"
+              ? "text-white border-b-2 border-sky-500"
+              : "text-zinc-500 hover:text-zinc-300"
+          }`}
+        >
+          Tech Drawing
+        </button>
         <div className="ml-auto flex items-center gap-3 pr-3">
           <button
             onClick={() => setGestureEnabled(v => !v)}
@@ -585,6 +679,55 @@ export default function CadPanel({
               </>
             ) : "Update 3D"}
           </button>
+          <button
+            onClick={onRunCadQuery}
+            disabled={!onRunCadQuery || cadQueryLoading || cadLoading || refineLoading}
+            className="text-xs px-2.5 py-1 bg-orange-600 text-white rounded hover:bg-orange-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+          >
+            {cadQueryLoading ? (
+              <>
+                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+                CadQuery...
+              </>
+            ) : "CadQuery"}
+          </button>
+          <button
+            onClick={onRunTemplate}
+            disabled={!onRunTemplate || templateLoading || cadLoading || refineLoading}
+            className="text-xs px-2.5 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+          >
+            {templateLoading ? (
+              <>
+                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+                Quick Gen...
+              </>
+            ) : "Quick Gen"}
+          </button>
+          {stepBase64 && (
+            <button
+              onClick={() => {
+                const binary = atob(stepBase64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                const blob = new Blob([bytes], { type: "application/step" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "model.step";
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="text-xs px-2.5 py-1 bg-cyan-700 text-white rounded hover:bg-cyan-600 transition-colors flex items-center gap-1.5"
+            >
+              STEP
+            </button>
+          )}
         </div>
       </div>
 
@@ -718,6 +861,202 @@ export default function CadPanel({
               Paste or generate code first
             </div>
           )}
+        </div>
+
+        {/* FEA Analysis tab */}
+        <div className={`absolute inset-0 flex flex-col overflow-auto ${tab === "fea" ? "" : "invisible pointer-events-none"}`}>
+          <div className="p-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onRunFEA}
+                disabled={!onRunFEA || feaLoading || !code}
+                className="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {feaLoading ? (
+                  <>
+                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                    </svg>
+                    Analysing...
+                  </>
+                ) : "Run FEA Analysis"}
+              </button>
+              {feaData?.safety_factor != null && (
+                <span className={`text-xs font-mono px-2 py-0.5 rounded ${
+                  feaData.safety_factor >= 2 ? "bg-emerald-900/50 text-emerald-300" :
+                  feaData.safety_factor >= 1 ? "bg-amber-900/50 text-amber-300" :
+                  "bg-red-900/50 text-red-300"
+                }`}>
+                  Safety Factor: {feaData.safety_factor.toFixed(1)}
+                </span>
+              )}
+            </div>
+
+            {feaData?.stress_script && (
+              <button
+                onClick={() => {
+                  setCode(feaData.stress_script);
+                  compiledCodeRef.current = "";
+                  setTab("preview");
+                }}
+                className="text-xs px-3 py-1.5 bg-red-600 text-white rounded hover:bg-red-500 transition-colors flex items-center gap-1.5"
+              >
+                View Stress Heat Map in 3D
+              </button>
+            )}
+            {feaData?.stress_script && (
+              <button
+                onClick={() => {
+                  if (cadCode) {
+                    setCode(cadCode);
+                    compiledCodeRef.current = "";
+                    setTab("preview");
+                  }
+                }}
+                className="text-xs px-2.5 py-1 bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600 transition-colors"
+              >
+                Restore Original Model
+              </button>
+            )}
+
+            {!feaData && !feaLoading && (
+              <div className="text-zinc-500 text-sm">
+                {code ? "Click \"Run FEA Analysis\" to perform structural analysis on the current model." : "Generate a 3D model first, then run FEA analysis."}
+              </div>
+            )}
+
+            {feaData && (
+              <div className="space-y-4 text-sm">
+                {/* Stress colour legend */}
+                <div className="flex items-center gap-3 text-[10px] font-mono">
+                  <span className="text-zinc-500 uppercase tracking-wider">Stress Map Legend:</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-500 inline-block" /> High</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-orange-500 inline-block" /> Med-High</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-yellow-400 inline-block" /> Medium</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-lime-500 inline-block" /> Low-Med</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-green-500 inline-block" /> Low</span>
+                </div>
+
+                {/* Summary */}
+                <div className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/50">
+                  <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Summary</h3>
+                  <p className="text-zinc-300">{feaData.summary}</p>
+                </div>
+
+                {/* Stress Points */}
+                {feaData.stress_points.length > 0 && (
+                  <div className="bg-red-950/20 rounded-lg p-3 border border-red-900/30">
+                    <h3 className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-2">Stress Concentration Points</h3>
+                    <ul className="space-y-1">
+                      {feaData.stress_points.map((point, i) => (
+                        <li key={i} className="text-zinc-300 text-xs flex gap-2">
+                          <span className="text-red-400 flex-shrink-0">!</span>
+                          {point}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Load Cases */}
+                {feaData.load_cases.length > 0 && (
+                  <div className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/50">
+                    <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Load Cases</h3>
+                    <ul className="space-y-1">
+                      {feaData.load_cases.map((lc, i) => (
+                        <li key={i} className="text-zinc-300 text-xs flex gap-2">
+                          <span className="text-zinc-500 flex-shrink-0">{i + 1}.</span>
+                          {lc}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Material Notes */}
+                {feaData.material_notes && (
+                  <div className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/50">
+                    <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Material Notes</h3>
+                    <p className="text-zinc-300 text-xs">{feaData.material_notes}</p>
+                  </div>
+                )}
+
+                {/* Recommendations */}
+                {feaData.recommendations.length > 0 && (
+                  <div className="bg-emerald-950/20 rounded-lg p-3 border border-emerald-900/30">
+                    <h3 className="text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-2">Recommendations</h3>
+                    <ul className="space-y-1">
+                      {feaData.recommendations.map((rec, i) => (
+                        <li key={i} className="text-zinc-300 text-xs flex gap-2">
+                          <span className="text-emerald-400 flex-shrink-0">+</span>
+                          {rec}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Full Report */}
+                <details className="bg-zinc-800/50 rounded-lg border border-zinc-700/50">
+                  <summary className="px-3 py-2 text-xs font-semibold text-zinc-400 uppercase tracking-wider cursor-pointer hover:text-zinc-300">
+                    Full Report
+                  </summary>
+                  <div className="px-3 pb-3 text-xs text-zinc-300 whitespace-pre-wrap font-mono leading-relaxed">
+                    {feaData.full_report}
+                  </div>
+                </details>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Technical Drawing tab */}
+        <div className={`absolute inset-0 flex flex-col overflow-auto ${tab === "drawing" ? "" : "invisible pointer-events-none"}`}>
+          <div className="p-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onRunDrawing}
+                disabled={!onRunDrawing || drawingLoading || !code}
+                className="text-xs px-3 py-1.5 bg-sky-600 text-white rounded hover:bg-sky-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {drawingLoading ? (
+                  <>
+                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                    </svg>
+                    Generating...
+                  </>
+                ) : "Generate Technical Drawing"}
+              </button>
+            </div>
+
+            {!drawingData && !drawingLoading && (
+              <div className="text-zinc-500 text-sm">
+                {code ? "Click \"Generate Technical Drawing\" to create an ISO-standard technical drawing." : "Generate a 3D model first, then create a technical drawing."}
+              </div>
+            )}
+
+            {drawingData && (
+              <div className="space-y-3">
+                <div className="rounded-lg overflow-hidden border border-zinc-700/50 bg-white">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={drawingData.image_url}
+                    alt="Technical drawing"
+                    className="w-full h-auto"
+                  />
+                </div>
+                <details className="bg-zinc-800/50 rounded-lg border border-zinc-700/50">
+                  <summary className="px-3 py-2 text-xs font-semibold text-zinc-400 uppercase tracking-wider cursor-pointer hover:text-zinc-300">
+                    Prompt Used
+                  </summary>
+                  <p className="px-3 pb-3 text-xs text-zinc-400">{drawingData.prompt_used}</p>
+                </details>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

@@ -1,201 +1,326 @@
-# TICKET-003: Iterative 3D Design — Version Control, Voice Commands & Multi-Object Support
+# TICKET-003: Composable Template Pipeline — Prompt to 3D Mechanical Parts in <8s
 
 ## Summary
-Evolve the single-shot 3D generation flow into a fast, iterative design loop. The initial model is generated with Claude Opus (high quality), and subsequent edits are applied by a fast model (Claude Haiku, ~2s per change). Designers can make quick adjustments via voice commands during a meeting, manage multiple objects per session, and browse the full version history of each object.
+Add a fast, template-based 3D generation path to QuakkaCAD. Instead of asking an LLM to write raw geometry code (which only works with frontier models), the LLM classifies a prompt into a known assembly type and fills in validated parameters. Pre-built OpenSCAD atomic templates handle all geometry. The pipeline runs on Cerebras (Qwen 3 235B) via Pydantic AI and targets <8s end-to-end from prompt to rendered STL.
 
 ## Goal
-A meeting participant can create an initial 3D design, then refine it with near-instant voice-driven edits ("make it 10mm taller", "add a hole on the left side") — each change taking ~2 seconds — while maintaining full version history and the ability to work on multiple objects in one session.
+A meeting participant types or speaks "90mm motor tube, 200mm long, 4 swept fins, 2 centering rings" and sees a correct, compilable 3D model in the viewer within 8 seconds — without requiring a frontier model.
 
 ## Background
-Currently, every generation is a full Opus call (~15-30s) with no memory of prior output. This makes small tweaks expensive and slow. By splitting into a two-tier model strategy (Opus for creation, Haiku for edits) and feeding the current OpenSCAD code as context, we can achieve sub-3s iteration cycles for dimensional and simple geometric changes.
+The current generation flow (`run_openscad_meeting` / `run_cadquery_meeting` in `api/agents.py`) asks the LLM to write full OpenSCAD or CadQuery code from scratch. This works well with Claude Sonnet/Opus but fails on fast models (Groq, Cerebras) because spatial reasoning for mechanical parts — concentric axes, fin spacing, gear meshing — exceeds their capabilities. The template pipeline sidesteps this by reducing the LLM's job to classification + parameter extraction, which fast models do reliably.
+
+This sits alongside the existing freeform generation (OpenSCAD and CadQuery buttons remain), giving users a third "fast template" path.
 
 ## Scope
 
 ### In scope
+- Atomic OpenSCAD template library (parametric `.scad` modules)
+- Python assembly composition functions that emit complete `.scad` source from validated specs
+- Pydantic models with geometric validators for each assembly type
+- Pydantic AI agent on Cerebras (Qwen 3 235B Instruct) with structured output
+- Render pipeline: spec -> composition -> OpenSCAD compile -> STL
+- Integration into the existing QuakkaCAD meeting flow (new endpoint + UI button)
+- Voice command trigger: "quick generate [description]"
+- 5 demo prompts as integration tests
 
-#### 1. Two-Tier Model Strategy
-- **Initial generation**: Claude Opus via Pydantic Gateway — high-quality, parametric OpenSCAD code (~15-30s).
-- **Iterative edits**: Claude Haiku via Pydantic Gateway — receives the current OpenSCAD code + the edit instruction, returns the modified code (~2s).
-- The system auto-selects the model: Opus for "create new", Haiku for "edit existing".
-- If Haiku produces a compilation error, auto-retry once with the error message appended. If it fails again, escalate to Opus.
+### Out of scope
+- Curved/lofted surfaces beyond what `hull()` provides
+- Internal threading, bearings, or rolling-element mechanisms
+- Material/color/render styling (templates use default colors)
+- Replacing the existing freeform OpenSCAD or CadQuery generation paths
+- Database persistence (in-memory per meeting, consistent with current architecture)
 
-#### 2. Version Control for 3D Objects
-- Every generation or edit creates a new version, stored in an ordered list per object.
-- Each version stores: version number, OpenSCAD code, timestamp, prompt/instruction that produced it, model used, compilation status.
-- UI: version history panel showing a scrollable list of versions with one-click restore.
-- "Undo" reverts to the previous version. "Redo" moves forward if available.
-- Restoring an old version creates a new version (branch-from-history), preserving the full timeline.
+## Architecture
 
-#### 3. Voice Commands for Instant Edits
-- At the start of a meeting, a popup/modal explains voice command capabilities and asks for opt-in.
-- Voice commands are extracted from the live transcript (from TICKET-002) using keyword detection.
-- Supported command patterns:
-  - Dimensional changes: "make it [X]mm taller/wider/shorter/deeper"
-  - Parameter edits: "change [parameter] to [value]"
-  - Add/remove features: "add a hole on the top", "remove the fillet"
-  - Color changes: "make the lid red"
-  - Undo/redo: "undo that", "go back"
-- Commands are detected, shown as a confirmation toast ("Changing height to 50mm..."), and executed via Haiku.
-- A small indicator in the UI shows when voice command mode is active.
-
-#### 4. Multi-Object Support
-- A meeting can contain multiple named 3D objects (e.g., "Enclosure", "Lid", "Bracket").
-- Object selector (tabs or dropdown) in the CAD panel to switch between objects.
-- Each object has its own independent version history, code editor, and 3D preview.
-- "New Object" button to create additional objects within the same meeting.
-- Voice commands apply to the currently selected object.
-
-## UI Changes
-
-### CAD Panel Updates
 ```
-┌─────────────────────────────────────────────────────┐
-│  Objects: [ Enclosure ▾ ]  [+ New Object]           │
-├────────────┬────────────────────────────────────────┤
-│  Versions  │  [ OpenSCAD Code ]  [ 3D Preview ]    │
-│            │                                        │
-│  v5 ●      │  // Parametric enclosure               │
-│  v4        │  box_width = 60;                       │
-│  v3        │  box_height = 50;  // was 40           │
-│  v2        │  ...                                   │
-│  v1        │                                        │
-│            │                                        │
-│  [Undo]    │                                        │
-│  [Redo]    │                                        │
-├────────────┴────────────────────────────────────────┤
-│  🎙 Voice commands active                           │
-│  [prompt input: "make the walls thicker"    ] [Send]│
-└─────────────────────────────────────────────────────┘
+User prompt (text or voice)
+   |
+   v
++-----------------------------------------------+
+| Pydantic AI Agent                             |
+|   model: cerebras:qwen-3-235b-instruct        |
+|   output_type: AssemblySpec (discriminated)    |
+|   retries: 1                                  |
+|   system_prompt: assembly catalog + few-shot   |
++-----------------------------------------------+
+   |
+   v  (validated Pydantic model)
++-----------------------------------------------+
+| Assembly dispatcher                           |
+|   maps assembly_id -> composition function    |
+|   composition fn calls atomic .scad templates |
++-----------------------------------------------+
+   |
+   v  (generated .scad text)
++-----------------------------------------------+
+| OpenSCAD CLI (existing openscad_compiler.py)  |
+|   openscad -o out.stl assembly.scad           |
+|   timeout: 5s, $fn=32                         |
++-----------------------------------------------+
+   |
+   v
+  STL bytes -> 3D viewer (existing CadPanel)
 ```
 
-### Voice Command Opt-In Modal (meeting start)
+### Integration with existing codebase
+
 ```
-┌──────────────────────────────────────┐
-│  🎙 Enable Voice Commands?          │
-│                                      │
-│  You can make instant changes to     │
-│  your 3D designs by speaking:        │
-│                                      │
-│  • "Make it 10mm taller"             │
-│  • "Change wall thickness to 3mm"    │
-│  • "Add a hole on the top"           │
-│  • "Undo that"                       │
-│                                      │
-│  Commands are detected from your     │
-│  live transcript automatically.      │
-│                                      │
-│  [ Enable ]          [ Skip ]        │
-└──────────────────────────────────────┘
+api/
+  agents.py              # Add Cerebras provider + template agent
+  schemas.py             # Add AssemblySpec union type
+  openscad_compiler.py   # Reuse existing compile_openscad()
+  routers/
+    meetings.py          # Add POST /meetings/{id}/agent/template endpoint
+  templates/
+    atomic/              # New: .scad module files
+      tube.scad
+      ring.scad
+      slotted_ring.scad
+      trapezoidal_fin.scad
+      spur_gear.scad
+      flange.scad
+    assemblies/           # New: Python composition functions
+      __init__.py
+      finned_rocket_body.py
+      gear_train.py
+      bushing_assembly.py
+      flanged_tube.py
+    models.py             # New: Pydantic specs + validators
+    agent.py              # New: Template pipeline agent
+    render.py             # New: spec -> scad -> STL pipeline
+
+quakka-cad/
+  app/
+    [conferenceId]/page.tsx        # Add handleRunTemplate callback + voice command
+    components/CadPanel.tsx        # Add "Quick Gen" button in toolbar
+    components/ConferenceRoom.tsx   # Pass template props through
+    api/meetings/[meetingId]/agent/template/route.ts  # New: proxy route
 ```
-
-## User Flow
-
-### Initial Creation
-1. User types or speaks a description: "Create an electronics enclosure 60x40x30mm".
-2. System routes to Opus, generates initial OpenSCAD code (~20s).
-3. Code compiles via WASM, 3D preview appears. Version v1 is saved.
-
-### Iterative Editing (text)
-1. User types "make the walls 3mm thick" in the prompt input.
-2. System sends current code + instruction to Haiku (~2s).
-3. New code replaces the editor, preview updates. Version v2 is saved.
-
-### Iterative Editing (voice)
-1. User says during the meeting: "make the box 10mm taller".
-2. Voice command detector picks it up from the transcript.
-3. A toast appears: "Changing box height +10mm..." with a cancel button (3s window).
-4. If not cancelled, Haiku edits the code. Version v3 is saved.
-
-### Version Navigation
-1. User clicks v1 in the version list.
-2. Code and preview revert to v1's state.
-3. A "Restore this version" button appears. Clicking it creates v6 (copy of v1).
-
-### Multi-Object
-1. User clicks "+ New Object", names it "Lid".
-2. CAD panel switches to the new empty object.
-3. User creates the lid design. Independent version history begins.
-4. User switches back to "Enclosure" via the object selector — its state is preserved.
 
 ## Technical Design
 
-### Two-Tier Model Routing (api/agents.py)
-```python
-# Edit prompt wraps current code + instruction for Haiku
-EDIT_SYSTEM_PROMPT = """\
-You are an OpenSCAD code editor. You receive existing OpenSCAD code and an edit instruction.
-Apply the requested change precisely. Return the COMPLETE modified OpenSCAD code.
-Do NOT explain changes — return ONLY the updated code.
-Preserve all existing structure, comments, and parameters unless the edit requires changing them.
-"""
+### 1. Atomic SCAD Templates (`api/templates/atomic/`)
 
-async def run_edit(
-    current_code: str,
-    instruction: str,
-    provider: str = "pydantic-fast",  # Haiku by default
-    max_tokens: int = 8192,
-) -> tuple[str, dict]:
+Each is a standalone `.scad` file exporting a single `module`. All centered on origin, axis = Z, produce manifold geometry.
+
+| Template | Module signature | Notes |
+|----------|-----------------|-------|
+| `tube.scad` | `module tube(outer_d, wall_thickness, length)` | Hollow cylinder |
+| `ring.scad` | `module ring(inner_d, radial_thickness, width)` | Centering ring |
+| `slotted_ring.scad` | `module slotted_ring(inner_d, radial_thickness, width, slot_count, slot_width, slot_depth)` | Radial slots for fin pass-through |
+| `trapezoidal_fin.scad` | `module trapezoidal_fin(root_chord, tip_chord, height, sweep, thickness)` | Root edge on Y axis, sweeps in +X |
+| `spur_gear.scad` | `module spur_gear(teeth, module_val, thickness, bore_d)` | Involute gear (BOSL2 or known-good) |
+| `flange.scad` | `module flange(outer_d, inner_d, thickness, bolt_count, bolt_circle_d, bolt_hole_d)` | Bolt pattern on circle |
+
+Quality bar: each module renders standalone via `openscad -o test.stl atomic/X.scad` with a test wrapper.
+
+### 2. Assembly Composition Functions (`api/templates/assemblies/`)
+
+Python functions that take a validated Pydantic spec and return a complete `.scad` source string. They import atomic templates via `use <../atomic/X.scad>` and compose with `union()`, `difference()`, `translate()`, `rotate()`.
+
+| Assembly | Spec model | Composition logic |
+|----------|-----------|-------------------|
+| `finned_rocket_body` | `FinnedRocketBodySpec` | tube + N rings (or slotted_rings if fins pass through) + M fins radially distributed |
+| `gear_train` | `GearTrainSpec` | N spur gears with computed center distances from module + tooth counts |
+| `bushing_assembly` | `BushingAssemblySpec` | Concentric tube + ring + optional flange |
+| `flanged_tube` | `FlangedTubeSpec` | Tube + flange on one or both ends |
+
+### 3. Pydantic Models (`api/templates/models.py`)
+
+```python
+from typing import Literal, Union, Annotated
+from pydantic import BaseModel, Field, model_validator
+
+class FinnedRocketBodySpec(BaseModel):
+    assembly_id: Literal["finned_rocket_body"]
+    reasoning: str = Field(description="Brief reasoning for parameter choices")
+    tube_outer_d: float = Field(gt=10, lt=500, description="Tube outer diameter in mm")
+    tube_wall: float = Field(gt=0.5, lt=20, description="Tube wall thickness in mm")
+    tube_length: float = Field(gt=20, lt=2000, description="Tube length in mm")
+    ring_count: int = Field(ge=0, le=4)
+    ring_width: float = Field(gt=0, lt=100, description="Ring axial width in mm")
+    ring_radial_thickness: float = Field(gt=0, lt=50)
+    ring_spacing: float | None = None
+    fin_count: int = Field(ge=0, le=8)
+    fin_root_chord: float = Field(gt=0)
+    fin_tip_chord: float = Field(ge=0)
+    fin_height: float = Field(gt=0)
+    fin_sweep: float = Field(ge=0)
+    fin_thickness: float = Field(gt=0.5, lt=20)
+    fins_through_rings: bool = True
+
+    @model_validator(mode="after")
+    def check_fits(self):
+        if self.ring_count >= 2 and self.ring_spacing:
+            if self.ring_spacing + 2 * self.ring_width > self.tube_length:
+                raise ValueError(
+                    "ring_spacing + ring widths exceed tube_length; "
+                    "reduce ring_spacing or increase tube_length"
+                )
+        if self.fin_root_chord > self.tube_length:
+            raise ValueError("fin_root_chord cannot exceed tube_length")
+        return self
+
+class GearTrainSpec(BaseModel):
+    assembly_id: Literal["gear_train"]
+    reasoning: str
+    gear_count: int = Field(ge=2, le=6)
+    teeth: list[int] = Field(min_length=2, max_length=6, description="Tooth count per gear")
+    module_val: float = Field(gt=0.5, lt=10, description="Gear module (mm)")
+    thickness: float = Field(gt=1, lt=50)
+    bore_d: float = Field(gt=0, lt=50)
+
+    @model_validator(mode="after")
+    def check_teeth_count(self):
+        if len(self.teeth) != self.gear_count:
+            raise ValueError(f"teeth list length ({len(self.teeth)}) must match gear_count ({self.gear_count})")
+        return self
+
+class BushingAssemblySpec(BaseModel):
+    assembly_id: Literal["bushing_assembly"]
+    reasoning: str
+    bore_d: float = Field(gt=1, lt=200)
+    outer_d: float = Field(gt=2, lt=300)
+    length: float = Field(gt=5, lt=500)
+    flange: bool = False
+    flange_outer_d: float | None = None
+    flange_thickness: float | None = None
+
+class FlangedTubeSpec(BaseModel):
+    assembly_id: Literal["flanged_tube"]
+    reasoning: str
+    tube_outer_d: float = Field(gt=5, lt=500)
+    tube_inner_d: float = Field(gt=1, lt=500)
+    tube_length: float = Field(gt=10, lt=2000)
+    flange_outer_d: float = Field(gt=5, lt=600)
+    flange_thickness: float = Field(gt=1, lt=50)
+    bolt_count: int = Field(ge=3, le=24)
+    bolt_circle_d: float = Field(gt=5, lt=500)
+    bolt_hole_d: float = Field(gt=1, lt=30)
+    flange_both_ends: bool = False
+
+    @model_validator(mode="after")
+    def check_diameters(self):
+        if self.tube_inner_d >= self.tube_outer_d:
+            raise ValueError("tube_inner_d must be less than tube_outer_d")
+        if self.flange_outer_d < self.tube_outer_d:
+            raise ValueError("flange_outer_d must be >= tube_outer_d")
+        return self
+
+AssemblySpec = Annotated[
+    Union[FinnedRocketBodySpec, GearTrainSpec, BushingAssemblySpec, FlangedTubeSpec],
+    Field(discriminator="assembly_id"),
+]
+```
+
+### 4. Cerebras Provider Config (`api/agents.py`)
+
+```python
+PROVIDER_CONFIG["cerebras"] = {
+    "model": "openai:qwen-3-235b-instruct",
+    "model_name": "qwen-3-235b-instruct",
+    "label": "Cerebras (Qwen 3 235B Instruct)",
+    "key_env": "CEREBRAS_API_KEY",
+    "base_url": "https://api.cerebras.ai/v1",
+}
+```
+
+Add `CEREBRAS_API_KEY` to `api/.env`.
+
+### 5. Template Agent (`api/templates/agent.py`)
+
+```python
+TEMPLATE_SYSTEM_PROMPT = """
+You are a mechanical parts classifier. Given a natural language description,
+output a structured specification for one of these assembly types:
+
+- finned_rocket_body: Rocket motor tubes with centering rings and fins
+- gear_train: Multiple meshing spur gears
+- bushing_assembly: Cylindrical bushings/bearings with optional flange
+- flanged_tube: Tubes with bolt-pattern flanges
+
+ALL dimensions are in millimeters. If the user omits a dimension, use sensible
+engineering defaults. The 'reasoning' field should briefly explain your choices.
+
+[few-shot examples per type]
+"""
+```
+
+### 6. Render Pipeline (`api/templates/render.py`)
+
+```python
+async def render_template(spec: AssemblySpec) -> tuple[bytes, str]:
+    """spec -> .scad composition -> OpenSCAD compile -> STL bytes.
+
+    Returns (stl_bytes, scad_source).
+    """
+    # Dispatch to composition function
+    scad_source = ASSEMBLY_DISPATCHERS[spec.assembly_id](spec)
+
+    # Write to temp file, compile with existing openscad_compiler
+    ok, stderr = await compile_openscad(scad_source, timeout=5.0)
+    if not ok:
+        raise RuntimeError(f"OpenSCAD compile failed: {stderr}")
+
+    # Re-compile to get STL (current compile_openscad validates only)
+    # Need to add STL export mode
+    stl_bytes = await compile_openscad_to_stl(scad_source, timeout=5.0)
+    return stl_bytes, scad_source
+```
+
+### 7. API Endpoint (`api/routers/meetings.py`)
+
+```python
+@router.post("/meetings/{meeting_id}/agent/template", tags=["agents"])
+async def trigger_template_generation(meeting_id: UUID, prompt: str = Body(...)):
+    """Fast template-based generation via Cerebras. Target: <8s e2e."""
     ...
 ```
 
-### Version Storage (per object)
-```python
-class ObjectVersion(BaseModel):
-    version: int
-    code: str
-    timestamp: datetime
-    instruction: str          # prompt or voice command that produced this
-    model_used: str           # "opus" or "haiku"
-    compile_status: str       # "success", "error", "pending"
-    compile_error: str | None
+### 8. Frontend Integration
 
-class DesignObject(BaseModel):
-    id: UUID
-    meeting_id: UUID
-    name: str
-    versions: list[ObjectVersion]
-    current_version: int
-```
+- New orange "Quick Gen" button in CadPanel toolbar (next to CadQuery button)
+- Voice command trigger: "quick generate [description]" or "template [description]"
+- Result renders as STL in the existing 3D preview (same as CadQuery path)
+- OpenSCAD source visible in code tab
 
-### Voice Command Detection
-- Runs on committed transcript lines from TICKET-002.
-- Pattern matching + lightweight classification to distinguish commands from conversation.
-- Debounce: ignore duplicate-sounding commands within 5 seconds.
-- Confirmation toast with cancel window before executing.
+## Demo Prompts
 
-### API Endpoints
-- `POST /api/meetings/{id}/objects` — create a new object in a meeting
-- `GET /api/meetings/{id}/objects` — list objects in a meeting
-- `POST /api/meetings/{id}/objects/{obj_id}/generate` — initial Opus generation
-- `POST /api/meetings/{id}/objects/{obj_id}/edit` — Haiku edit (sends current code + instruction)
-- `GET /api/meetings/{id}/objects/{obj_id}/versions` — version history
-- `POST /api/meetings/{id}/objects/{obj_id}/versions/{v}/restore` — restore a past version
+| # | Prompt | Expected assembly |
+|---|--------|-------------------|
+| 1 | "ball bushing with 8mm bore, 15mm OD, 24mm long" | `bushing_assembly` |
+| 2 | "A central motor tube 90mm OD, 3mm wall, 200mm long. Two centering rings 80mm apart, 15mm wide, 4mm thick. 4 swept fins 90 deg apart through ring slots. Root 110mm, tip 50mm, sweep 60mm, height 110mm, 3mm thick." | `finned_rocket_body` |
+| 3 | "a 3-stage gear train, module 1.5, 20-40-60 teeth, 5mm thick" | `gear_train` |
+| 4 | "flanged tube, 50mm OD, 30mm ID, 100mm long, M5 bolt holes, 6 bolts" | `flanged_tube` |
+| 5 | "rocket body 60mm OD, 1m long, 4 fins, no rings" | `finned_rocket_body` |
 
 ## Acceptance Criteria
 
-1. Initial generation uses Opus and produces a compilable parametric OpenSCAD model.
-2. Editing an existing model via text prompt uses Haiku and returns updated code in <5 seconds.
-3. Every generation/edit creates a new version entry with code, timestamp, instruction, and model used.
-4. User can browse version history, click any version to preview it, and restore it.
-5. Undo/redo navigates through version history correctly.
-6. Voice commands are detected from the live transcript and produce edits via Haiku.
-7. A confirmation toast appears before executing a voice command, with a cancel option.
-8. Voice command opt-in modal appears at meeting start; commands are only active if opted in.
-9. Multiple objects can be created in one meeting, each with independent state and version history.
-10. Switching between objects preserves each object's code, preview, and version history.
-11. If Haiku produces a compilation error, the system retries once with error context, then falls back to Opus.
+1. Prompt-to-STL pipeline runs end-to-end in <8s p95 on the 5 demo prompts
+2. At least 6 atomic templates and 4 assembly templates compile and render cleanly
+3. Pydantic validators reject geometrically impossible inputs (inner > outer, fins > tube length) before OpenSCAD runs
+4. Validation failures auto-retry once via Pydantic AI's retry loop with actionable error messages
+5. All 5 demo prompts produce manifold STL output that renders in the QuakkaCAD 3D viewer
+6. The template path integrates into the meeting flow: appears in model iteration history, works with version navigation
+7. Voice command "quick generate [description]" triggers the template pipeline
+8. Existing OpenSCAD and CadQuery generation paths are unaffected
 
 ## Risks / Open Questions
-- **Voice command false positives**: conversational speech like "I think we should make it taller" vs. the actual command "make it taller". May need a trigger phrase ("hey quakka, make it taller") or rely on the confirmation toast as a safety net.
-- **Haiku accuracy on complex edits**: simple dimensional changes are reliable, but structural edits ("add a gear mechanism") may exceed Haiku's capabilities. The Opus fallback handles this, but latency spikes from 2s to 20s.
-- **Context window for edits**: large OpenSCAD files (500+ lines) plus instructions may approach Haiku's context limits. Consider sending only relevant parameter sections for simple dimensional changes.
-- **Cost**: Haiku edits are very cheap (~$0.001/edit). Opus creations are ~$0.05-0.15 each. Voice commands could trigger many Haiku calls — monitor usage per meeting.
-- **Version storage**: in-memory for MVP (consistent with TICKET-002). Persistence to database is a follow-up.
+
+| Risk | Mitigation |
+|------|-----------|
+| Cerebras structured output unreliable on Qwen 3 | `reasoning: str` field before `assembly_id` forces brief CoT before classification |
+| OpenSCAD render >5s for complex gears | Pre-set `$fn=32`, use `convexity` hints, timeout at 5s |
+| Pydantic AI lacks native Cerebras provider | Use `OpenAIProvider` with Cerebras OpenAI-compatible base URL |
+| Fin slot dimensions mismatch -> non-manifold | Compute `slot_width = fin_thickness + 0.2mm` clearance in composition fn, not from LLM |
+| Cerebras downtime during demo | Pre-cache the 5 demo prompt outputs; serve from cache on exact match |
+| BOSL2 not available on system OpenSCAD | Bundle a self-contained involute gear module instead of depending on BOSL2 |
 
 ## Definition of Done
-- Two-tier model routing works: Opus for creation, Haiku for edits, with automatic fallback.
-- Version history UI is functional with browse, restore, undo, and redo.
-- Voice commands trigger edits from the live transcript with confirmation UX.
-- Multi-object support with independent state per object.
-- Manual test with a 3-participant meeting: create 2 objects, make 5+ voice edits, navigate version history.
-- Code reviewed and merged to `main`.
+
+- All 5 demo prompts pass end-to-end in integration tests
+- p95 latency <8s measured across 10 runs of each demo prompt
+- "Quick Gen" button and voice command work in a live meeting session
+- Template iterations appear in CadPanel version history alongside freeform generations
+- Manual test: 2 participants in a meeting, one uses template generation, other sees the model update
+- Code reviewed and merged to `main`

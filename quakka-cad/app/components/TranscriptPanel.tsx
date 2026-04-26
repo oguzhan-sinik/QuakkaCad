@@ -8,6 +8,7 @@ interface TranscriptLine {
   speakerName: string;
   text: string;
   timestamp: number;
+  isChat?: boolean;
 }
 
 interface PartialLine {
@@ -46,6 +47,7 @@ export function useTranscript() {
           speakerName: event.speakerName,
           text: event.text,
           timestamp: event.timestamp,
+          isChat: event.peerId === "__self__",
         },
       ]);
       setPartials((prev) => {

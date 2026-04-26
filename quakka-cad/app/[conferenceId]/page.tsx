@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PlanBlock } from "../components/PlanSidebar";
-import type { ModelIteration } from "../components/CadPanel";
+import type { ModelIteration, FEAAnalysisData, TechnicalDrawingData } from "../components/CadPanel";
 import { useConference } from "../lib/useConference";
 import { useScribe } from "../lib/useScribe";
 import { useTranscript } from "../components/TranscriptPanel";
@@ -36,7 +36,24 @@ export default function ConferencePage() {
   const [planUpdatedForCad, setPlanUpdatedForCad] = useState(false);
   const [modelIterations, setModelIterations] = useState<ModelIteration[]>([]);
   const [viewingVersionId, setViewingVersionId] = useState<string | null>(null);
-  const [cadTabOverride, setCadTabOverride] = useState<"code" | "preview" | null>(null);
+  const [cadTabOverride, setCadTabOverride] = useState<"code" | "preview" | "fea" | "drawing" | null>(null);
+  const [feaLoading, setFeaLoading] = useState(false);
+  const [feaData, setFeaData] = useState<FEAAnalysisData | null>(null);
+  const [drawingLoading, setDrawingLoading] = useState(false);
+  const [drawingData, setDrawingData] = useState<TechnicalDrawingData | null>(null);
+  const [cadQueryLoading, setCadQueryLoading] = useState(false);
+  const [stlBase64, setStlBase64] = useState<string | null>(null);
+  const [stepBase64, setStepBase64] = useState<string | null>(null);
+  const [currentScriptLanguage, setCurrentScriptLanguage] = useState<"openscad" | "cadquery">("openscad");
+  const feaLoadingRef = useRef(false);
+  feaLoadingRef.current = feaLoading;
+  const drawingLoadingRef = useRef(false);
+  drawingLoadingRef.current = drawingLoading;
+  const cadQueryLoadingRef = useRef(false);
+  cadQueryLoadingRef.current = cadQueryLoading;
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const templateLoadingRef = useRef(false);
+  templateLoadingRef.current = templateLoading;
   const modelIterationsRef = useRef<ModelIteration[]>([]);
   modelIterationsRef.current = modelIterations;
   const cadLoadingRef = useRef(false);
@@ -100,12 +117,37 @@ export default function ConferencePage() {
       if (!res.ok) throw new Error(await res.text());
       const result = await res.json();
       setCadCode(result.iteration.script);
+      setCurrentScriptLanguage("openscad");
+      setStlBase64(null);
+      setStepBase64(null);
       setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
       setViewingVersionId(null);
     } catch (e) {
       console.error("OpenSCAD agent error:", e);
     } finally {
       setCadLoading(false);
+    }
+  }, []);
+
+  const handleRunCadQuery = useCallback(async () => {
+    const mid = meetingIdRef.current;
+    if (!mid || cadQueryLoadingRef.current) return;
+    setPlanUpdatedForCad(false);
+    setCadQueryLoading(true);
+    try {
+      const res = await fetch(`/api/meetings/${mid}/agent/cadquery`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      setCadCode(result.iteration.script);
+      setCurrentScriptLanguage("cadquery");
+      setStlBase64(result.meta?.stl_base64 ?? null);
+      setStepBase64(result.meta?.step_base64 ?? null);
+      setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
+      setViewingVersionId(null);
+    } catch (e) {
+      console.error("CadQuery agent error:", e);
+    } finally {
+      setCadQueryLoading(false);
     }
   }, []);
 
@@ -124,6 +166,68 @@ export default function ConferencePage() {
       console.error("Refine error:", e);
     } finally {
       setRefineLoading(false);
+    }
+  }, []);
+
+  const handleRunFEA = useCallback(async () => {
+    const mid = meetingIdRef.current;
+    if (!mid || feaLoadingRef.current) return;
+    setFeaLoading(true);
+    setCadTabOverride("fea");
+    try {
+      const res = await fetch(`/api/meetings/${mid}/agent/fea`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      setFeaData(result.analysis as FEAAnalysisData);
+    } catch (e) {
+      console.error("FEA analysis error:", e);
+    } finally {
+      setFeaLoading(false);
+    }
+  }, []);
+
+  const handleRunDrawing = useCallback(async () => {
+    const mid = meetingIdRef.current;
+    if (!mid || drawingLoadingRef.current) return;
+    setDrawingLoading(true);
+    setCadTabOverride("drawing");
+    try {
+      const res = await fetch(`/api/meetings/${mid}/agent/drawing`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      setDrawingData(result.drawing as TechnicalDrawingData);
+    } catch (e) {
+      console.error("Technical drawing error:", e);
+    } finally {
+      setDrawingLoading(false);
+    }
+  }, []);
+
+  const handleRunTemplate = useCallback(async () => {
+    const mid = meetingIdRef.current;
+    if (!mid || templateLoadingRef.current) return;
+    setTemplateLoading(true);
+    try {
+      // Use last few transcript lines as the prompt
+      const recent = linesRef.current.slice(-5).map(l => l.text).join(" ");
+      const prompt = recent || "parametric enclosure 60x40x30mm";
+      const res = await fetch(`/api/meetings/${mid}/agent/template`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      setCadCode(result.iteration.script);
+      setCurrentScriptLanguage("openscad");
+      setStlBase64(null);
+      setStepBase64(null);
+      setModelIterations(prev => [...prev, result.iteration as ModelIteration]);
+      setViewingVersionId(null);
+    } catch (e) {
+      console.error("Template generation error:", e);
+    } finally {
+      setTemplateLoading(false);
     }
   }, []);
 
@@ -209,14 +313,18 @@ export default function ConferencePage() {
             setTargetedBlockIds((prev) => new Set([...prev, block.id]));
 
           } else if (type === "done") {
+            const created = (event.total_created as number) ?? 0;
+            const updated = (event.total_updated as number) ?? 0;
             // Broadcast final plan state to WebSocket peers
             setPlanBlocks((prev) => {
               conference.sendPlanUpdate(prev);
               return prev;
             });
-            setPlanUpdatedForCad(true);
-            // Auto-trigger 3D update whenever the plan changes
-            handleRunOpenSCAD();
+            // Auto-trigger 3D generation only if planning actually produced/changed blocks
+            if (created > 0 || updated > 0) {
+              setPlanUpdatedForCad(true);
+              handleRunOpenSCAD();
+            }
             // Exit immediately — don't wait for the stream to close naturally,
             // since Next.js dev may not propagate the backend's connection close.
             streamEnded = true;
@@ -284,7 +392,43 @@ export default function ConferencePage() {
       cooldownMs: 3000,
       action: () => setCadTabOverride("preview"),
     },
-  ], [handleRunOpenSCAD, handleRefine, handleRunPlanner]);
+    {
+      id: "run-cadquery",
+      triggers: ["run cadquery", "use cadquery", "cadquery model", "generate cadquery"],
+      cooldownMs: 8000,
+      action: () => handleRunCadQuery(),
+    },
+    {
+      id: "quick-generate",
+      triggers: ["quick generate", "quick gen", "template generate", "fast generate"],
+      cooldownMs: 8000,
+      action: () => handleRunTemplate(),
+    },
+    {
+      id: "run-fea",
+      triggers: ["run analysis", "run fea", "structural analysis", "stress analysis", "run fea analysis"],
+      cooldownMs: 8000,
+      action: () => handleRunFEA(),
+    },
+    {
+      id: "run-drawing",
+      triggers: ["technical drawing", "generate drawing", "create drawing", "engineering drawing"],
+      cooldownMs: 8000,
+      action: () => handleRunDrawing(),
+    },
+    {
+      id: "show-fea",
+      triggers: ["show analysis", "show fea", "show stress"],
+      cooldownMs: 3000,
+      action: () => setCadTabOverride("fea"),
+    },
+    {
+      id: "show-drawing",
+      triggers: ["show drawing", "show technical drawing"],
+      cooldownMs: 3000,
+      action: () => setCadTabOverride("drawing"),
+    },
+  ], [handleRunOpenSCAD, handleRunCadQuery, handleRunTemplate, handleRefine, handleRunPlanner, handleRunFEA, handleRunDrawing]);
 
   const { commandLineIndices } = useVoiceCommands(lines, voiceCommands);
   const commandLineIndicesRef = useRef(commandLineIndices);
@@ -411,6 +555,19 @@ export default function ConferencePage() {
       viewingVersionId={viewingVersionId}
       onSelectVersion={handleSelectVersion}
       cadTabOverride={cadTabOverride}
+      onRunCadQuery={meetingId ? handleRunCadQuery : undefined}
+      cadQueryLoading={cadQueryLoading}
+      stlBase64={stlBase64}
+      stepBase64={stepBase64}
+      currentScriptLanguage={currentScriptLanguage}
+      onRunTemplate={meetingId ? handleRunTemplate : undefined}
+      templateLoading={templateLoading}
+      onRunFEA={meetingId ? handleRunFEA : undefined}
+      feaLoading={feaLoading}
+      feaData={feaData}
+      onRunDrawing={meetingId ? handleRunDrawing : undefined}
+      drawingLoading={drawingLoading}
+      drawingData={drawingData}
     />
   );
 }
