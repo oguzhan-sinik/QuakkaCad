@@ -93,7 +93,6 @@ async def _run_sync(fn, *args, **kwargs) -> Any:
 async def get_generation_context(
     agent_id: str,
     session_id: str,
-    max_tokens: int = 500,
 ) -> str:
     """Retrieve past lessons/context for this agent before an LLM call.
 
@@ -113,35 +112,30 @@ async def get_generation_context(
     }.get(agent_id, f"lessons for {agent_id} agent")
 
     try:
-        context = await _run_sync(
-            client.get_context,
+        result = await _run_sync(
+            client.recall,
             session_id=session_id,
             query=query_for_agent,
-            mode="summary",
-            max_token_budget=max_tokens,
         )
-        if context is None:
+        if not result:
+            logger.debug("MuBit context empty for agent=%s", agent_id)
             return ""
 
-        if isinstance(context, dict):
-            text = (
-                context.get("context_block")
-                or context.get("section_summaries")
-                or context.get("context")
-                or context.get("text")
-                or ""
-            )
-            if isinstance(text, list):
-                text = "\n".join(str(s) for s in text)
-        else:
-            text = str(context) if context else ""
+        parts = []
+        final_answer = (result.get("final_answer") or "").strip()
+        if final_answer:
+            parts.append(final_answer)
+        for ev in result.get("evidence") or []:
+            content = (ev.get("content") or "").strip()
+            if content and ev.get("entry_type") in ("lesson", "trace"):
+                parts.append(content)
 
-        result = text.strip() if text and text.strip() else ""
-        if result:
-            logger.info("MuBit context retrieved for agent=%s (%d chars)", agent_id, len(result))
+        text = "\n\n".join(parts).strip()
+        if text:
+            logger.info("MuBit context retrieved for agent=%s (%d chars)", agent_id, len(text))
         else:
             logger.debug("MuBit context empty for agent=%s", agent_id)
-        return result
+        return text
     except Exception as e:
         logger.warning("MuBit get_context failed: %s", e)
         return ""
@@ -464,13 +458,12 @@ async def seed_template_library() -> None:
     logger.info("MuBit template library seeded")
 
 
-async def get_template_context(user_prompt: str, max_tokens: int = 600) -> str:
-    """Retrieve template library context relevant to a user prompt.
+async def get_template_context(user_prompt: str) -> str:
+    """Retrieve template library context relevant to a user prompt via recall().
 
-    Used by the template classifier agent before the LLM call to surface:
-    - which template types are available and their parameter schemas
-    - past lessons about parameter selection and compilation outcomes
-    - engineering constraints that commonly cause failures
+    Uses recall() (semantic search + synthesis) rather than get_context(), which
+    returns an empty context_block in practice. Evidence content is joined into
+    a plain-text block for injection into the LLM prompt.
 
     Returns an empty string if MuBit is unavailable (graceful degradation).
     """
@@ -479,35 +472,36 @@ async def get_template_context(user_prompt: str, max_tokens: int = 600) -> str:
         return ""
 
     try:
-        context = await _run_sync(
-            client.get_context,
+        result = await _run_sync(
+            client.recall,
             session_id=_TEMPLATE_LIBRARY_RUN_ID,
             query=user_prompt,
-            mode="summary",
-            max_token_budget=max_tokens,
         )
-        if context is None:
+        if not result:
+            logger.debug("MuBit template context empty")
             return ""
 
-        if isinstance(context, dict):
-            text = (
-                context.get("context_block")
-                or context.get("section_summaries")
-                or context.get("context")
-                or context.get("text")
-                or ""
-            )
-            if isinstance(text, list):
-                text = "\n".join(str(s) for s in text)
-        else:
-            text = str(context) if context else ""
+        parts = []
 
-        result = text.strip() if text and text.strip() else ""
-        if result:
-            logger.info("MuBit template context retrieved (%d chars)", len(result))
+        # Synthesised answer from MuBit (short summary)
+        final_answer = result.get("final_answer", "").strip()
+        if final_answer:
+            parts.append(f"Summary: {final_answer}")
+
+        # Full content of each evidence item (facts, lessons, traces)
+        for ev in result.get("evidence") or []:
+            content = (ev.get("content") or "").strip()
+            entry_type = ev.get("entry_type", "")
+            if content and entry_type in ("fact", "lesson", "trace"):
+                parts.append(content)
+
+        text = "\n\n".join(parts)
+        if text:
+            logger.info("MuBit template context retrieved (%d chars, %d evidence items)",
+                        len(text), len(result.get("evidence") or []))
         else:
             logger.debug("MuBit template context empty")
-        return result
+        return text
     except Exception as e:
         logger.warning("MuBit get_template_context failed: %s", e)
         return ""
