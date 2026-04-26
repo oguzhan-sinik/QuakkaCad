@@ -28,6 +28,9 @@ class FinnedRocketBodySpec(BaseModel):
     fin_sweep: float = Field(default=30, ge=0, description="Fin sweep distance mm")
     fin_thickness: float = Field(default=2, gt=0.5, lt=20, description="Fin thickness mm")
     fins_through_rings: bool = Field(default=True, description="Cut slots in rings for fins")
+    body_color: str = Field(default="SteelBlue", description="OpenSCAD color name for tube body")
+    ring_color: str = Field(default="Gold", description="OpenSCAD color name for centering rings")
+    fin_color: str = Field(default="Tomato", description="OpenSCAD color name for fins")
 
     @model_validator(mode="after")
     def check_fits(self):

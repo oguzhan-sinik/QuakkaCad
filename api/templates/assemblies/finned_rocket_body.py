@@ -43,7 +43,7 @@ def compose(spec: FinnedRocketBodySpec) -> str:
     lines.append("// Assembly")
     lines.append("union() {")
     lines.append(
-        f"    color(\"SteelBlue\") "
+        f"    color(\"{spec.body_color}\") "
         f"tube(od={spec.tube_outer_d}, id={tube_id}, length={spec.tube_length});"
     )
 
@@ -51,7 +51,7 @@ def compose(spec: FinnedRocketBodySpec) -> str:
     for z in ring_positions:
         if spec.fins_through_rings and spec.fin_count > 0:
             lines.append(
-                f"    color(\"Gold\") translate([0, 0, {z:.2f}]) "
+                f"    color(\"{spec.ring_color}\") translate([0, 0, {z:.2f}]) "
                 f"slotted_ring(od={ring_od}, id={spec.tube_outer_d}, "
                 f"height={spec.ring_width}, "
                 f"slot_count={spec.fin_count}, slot_width={slot_width:.1f}, "
@@ -59,7 +59,7 @@ def compose(spec: FinnedRocketBodySpec) -> str:
             )
         else:
             lines.append(
-                f"    color(\"Gold\") translate([0, 0, {z:.2f}]) "
+                f"    color(\"{spec.ring_color}\") translate([0, 0, {z:.2f}]) "
                 f"ring(od={ring_od}, id={spec.tube_outer_d}, "
                 f"height={spec.ring_width});"
             )
@@ -71,7 +71,7 @@ def compose(spec: FinnedRocketBodySpec) -> str:
         angle_step = 360.0 / spec.fin_count
         for i in range(spec.fin_count):
             lines.append(
-                f"    color(\"Tomato\") rotate([0, 0, {i * angle_step:.1f}]) "
+                f"    color(\"{spec.fin_color}\") rotate([0, 0, {i * angle_step:.1f}]) "
                 f"translate([{spec.tube_outer_d / 2}, 0, 0]) "
                 f"trapezoidal_fin(root_chord={spec.fin_root_chord}, "
                 f"tip_chord={spec.fin_tip_chord}, "

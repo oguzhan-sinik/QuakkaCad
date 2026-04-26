@@ -39,7 +39,10 @@ TEMPLATES (use assembly_type as discriminator):
 
 1. "finned_rocket_body" — fields: reasoning, assembly_type, tube_outer_d, tube_wall, \
 tube_length, ring_count, ring_width, ring_radial_thickness, ring_spacing, fin_count, \
-fin_root_chord, fin_tip_chord, fin_height, fin_sweep, fin_thickness, fins_through_rings
+fin_root_chord, fin_tip_chord, fin_height, fin_sweep, fin_thickness, fins_through_rings, \
+body_color (default "SteelBlue"), ring_color (default "Gold"), fin_color (default "Tomato"). \
+Colors are OpenSCAD CSS color names (e.g. "Red", "Blue", "Green", "White", "Black", "Orange", \
+"Purple", "Cyan", "Yellow", "Lime", "Navy", "Crimson"). Use the exact name from the user's request.
 
 2. "gear_train" — fields: reasoning, assembly_type, gear_count, teeth (array of ints), \
 module_val, thickness, bore_d
@@ -72,7 +75,15 @@ Input: "90mm motor tube, 3mm wall, 200mm long, 4 fins"
 {"reasoning":"Standard rocket motor tube","assembly_type":"finned_rocket_body",\
 "tube_outer_d":90,"tube_wall":3,"tube_length":200,"ring_count":0,"ring_width":10,\
 "ring_radial_thickness":4,"fin_count":4,"fin_root_chord":80,"fin_tip_chord":30,\
-"fin_height":60,"fin_sweep":30,"fin_thickness":2,"fins_through_rings":false}
+"fin_height":60,"fin_sweep":30,"fin_thickness":2,"fins_through_rings":false,\
+"body_color":"SteelBlue","ring_color":"Gold","fin_color":"Tomato"}
+
+Input: "same rocket but make the body red and fins white"
+{"reasoning":"Color update — body red, fins white, rings unchanged","assembly_type":"finned_rocket_body",\
+"tube_outer_d":90,"tube_wall":3,"tube_length":200,"ring_count":0,"ring_width":10,\
+"ring_radial_thickness":4,"fin_count":4,"fin_root_chord":80,"fin_tip_chord":30,\
+"fin_height":60,"fin_sweep":30,"fin_thickness":2,"fins_through_rings":false,\
+"body_color":"Red","ring_color":"Gold","fin_color":"White"}
 
 Input: "3-gear train, module 1.5, 20-40-60 teeth, 5mm thick"
 {"reasoning":"3-stage reduction","assembly_type":"gear_train","gear_count":3,\
