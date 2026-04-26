@@ -88,8 +88,8 @@ class ModelDelta(BaseModel):
 class ModelIteration(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    script: str = Field(min_length=10, description="Raw code (OpenSCAD or CadQuery Python)")
-    script_language: Literal["openscad", "cadquery"] = Field(default="openscad")
+    script: str = Field(min_length=10, description="Raw OpenSCAD code")
+    script_language: Literal["openscad"] = Field(default="openscad")
     reasoning: str = Field(description="Agent's justification for geometric decisions in this version")
     applied_lessons: List[str] = Field(default_factory=list, description="MuBit memory utilised")
     delta: Optional[ModelDelta] = Field(default=None, description="What changed from the previous iteration")
@@ -125,7 +125,7 @@ class PlanBlockCreate(BaseModel):
 
 class ModelIterationCreate(BaseModel):
     script: str = Field(min_length=10)
-    script_language: Literal["openscad", "cadquery"] = Field(default="openscad")
+    script_language: Literal["openscad"] = Field(default="openscad")
     reasoning: str
     applied_lessons: List[str] = Field(default_factory=list)
 

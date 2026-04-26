@@ -12,8 +12,6 @@ from pydantic import BaseModel
 import logging
 
 from agents import (
-    run_cadquery_fix,
-    run_cadquery_meeting,
     run_fea_analysis,
     run_openscad_edit,
     run_openscad_fix,
@@ -21,7 +19,6 @@ from agents import (
     run_openscad_refine,
     run_planner_chunked,
 )
-from cadquery_compiler import compile_cadquery
 from mubit_client import record_template_outcome
 from openscad_compiler import compile_openscad
 from schemas import (
@@ -483,101 +480,7 @@ async def trigger_refine(
     return OpenSCADResult(iteration=iteration, meta=meta)
 
 
-# ---------------------------------------------------------------------------
-# CadQuery Model Generation
-# ---------------------------------------------------------------------------
 
-
-@router.post("/meetings/{meeting_id}/agent/cadquery", response_model=OpenSCADResult, tags=["agents"])
-async def trigger_cadquery(
-    meeting_id: UUID,
-    max_fix_iterations: int = Query(default=3, ge=0, le=5),
-):
-    """Run the CadQuery Agent (Anthropic), compile, export STEP+STL, iterate fixes."""
-    _get_meeting_or_404(meeting_id)
-
-    current_blocks = store.blocks[meeting_id]
-    full_transcript = store.transcripts[meeting_id]
-
-    try:
-        iteration_create, meta = await run_cadquery_meeting(
-            transcript=full_transcript,
-            blocks=current_blocks,
-        )
-    except asyncio.CancelledError:
-        raise
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"CadQuery agent error: {e}")
-
-    # --- Compile + fix loop on backend ---
-    compile_ok: bool | None = None
-    compile_stderr: str | None = None
-    stl_bytes: bytes | None = None
-    step_bytes: bytes | None = None
-    fix_iterations = 0
-    script = iteration_create.script
-
-    for attempt in range(max_fix_iterations + 1):
-        try:
-            cq_result = await compile_cadquery(script)
-            compile_ok = cq_result.success
-            compile_stderr = cq_result.stderr or None
-            stl_bytes = cq_result.stl_bytes
-            step_bytes = cq_result.step_bytes
-            if cq_result.success:
-                break
-            # Don't retry on system-level crashes (segfault)
-            if "SIGSEGV" in (cq_result.stderr or ""):
-                break
-            if attempt < max_fix_iterations:
-                fixed, _ = await run_cadquery_fix(current_script=script, stderr=cq_result.stderr)
-                fix_iterations += 1
-                script = fixed
-        except Exception as e:
-            logger.warning("CadQuery compile error: %s", e)
-            compile_ok = False
-            compile_stderr = str(e)
-            break
-
-    iteration_create = ModelIterationCreate(
-        script=script,
-        script_language="cadquery",
-        reasoning=iteration_create.reasoning,
-        applied_lessons=iteration_create.applied_lessons,
-    )
-
-    delta = ModelDelta(changed_block_ids=[], edits=[], is_full_regen=True)
-    iteration = ModelIteration(
-        **iteration_create.model_dump(),
-        delta=delta,
-        compile_ok=compile_ok,
-        compile_stderr=compile_stderr,
-        fix_iterations=fix_iterations,
-    )
-    store.models[meeting_id].append(iteration)
-
-    # Cache STL for FEA
-    if stl_bytes:
-        store.stl_cache[iteration.id] = stl_bytes
-
-    meta["compile_ok"] = compile_ok
-    meta["fix_iterations"] = fix_iterations
-
-    import base64
-    # STL for 3D preview
-    if stl_bytes:
-        meta["stl_base64"] = base64.b64encode(stl_bytes).decode()
-    # STEP for engineering download
-    if step_bytes:
-        meta["step_base64"] = base64.b64encode(step_bytes).decode()
-
-    logger.info(
-        "CadQuery generation complete for meeting %s: %d fix attempt(s), compile_ok=%s, STEP=%d bytes",
-        meeting_id, fix_iterations, compile_ok, len(step_bytes) if step_bytes else 0,
-    )
-    return OpenSCADResult(iteration=iteration, meta=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -715,14 +618,6 @@ async def trigger_fea_analysis(meeting_id: UUID, body: FEARequest = FEARequest()
     if not stl_bytes:
         stl_bytes = store.stl_cache.get(latest_model.id)
 
-    if not stl_bytes and latest_model.script_language == "cadquery":
-        try:
-            cq_result = await compile_cadquery(latest_model.script)
-            if cq_result.success and cq_result.stl_bytes:
-                stl_bytes = cq_result.stl_bytes
-                store.stl_cache[latest_model.id] = stl_bytes
-        except Exception as e:
-            logger.warning("CadQuery recompile for FEA failed: %s", e)
 
     if not stl_bytes:
         # Fallback to LLM-only FEA
@@ -885,7 +780,7 @@ async def trigger_technical_drawing(meeting_id: UUID, body: DrawingRequest = Dra
 
         design_desc = "; ".join(block_descriptions) if block_descriptions else "parametric 3D enclosure"
 
-        # Extract dimensions from the OpenSCAD/CadQuery script
+        # Extract dimensions from the OpenSCAD script
         import re
         dimensions = []
         for line in latest_model.script.split("\n"):
