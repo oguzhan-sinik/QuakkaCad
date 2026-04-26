@@ -18,6 +18,11 @@ from .models import (
     FinnedRocketBodySpec,
     FlangedTubeSpec,
     GearTrainSpec,
+    HelicalSpringSpec,
+    HexStandoffSpec,
+    RackAndPinionSpec,
+    ShaftCouplingSpec,
+    WormGearSpec,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +91,52 @@ Input: "flanged tube 50mm OD, 30mm ID, 100mm, 6 M5 bolts"
 {"reasoning":"Flanged pipe section","assembly_type":"flanged_tube","tube_outer_d":50,\
 "tube_inner_d":30,"tube_length":100,"flange_outer_d":80,"flange_thickness":5,\
 "bolt_count":6,"bolt_circle_d":65,"bolt_hole_d":5.5,"flange_both_ends":false}
+
+7. "rack_and_pinion" — fields: reasoning, assembly_type, rack_length, rack_width, \
+rack_height, module_val, pinion_teeth, pinion_thickness, bore_d
+Use for LINEAR motion (CNC gantries, drawers, steering racks). \
+Constraint: rack_width >= 2 * module_val.
+
+8. "worm_gear" — fields: reasoning, assembly_type, worm_starts, wheel_teeth, module_val, \
+worm_length, wheel_thickness, bore_d, worm_bore_d
+Use for HIGH-REDUCTION + self-locking drives (lifts, valve actuators, rotary stages). \
+Ratio = wheel_teeth / worm_starts.
+
+9. "helical_spring" — fields: reasoning, assembly_type, wire_d, coil_od, free_length, \
+coil_count, spring_type ("compression"|"extension"|"torsion")
+Constraint: coil_od > 2 * wire_d.
+
+10. "shaft_coupling" — fields: reasoning, assembly_type, shaft_d1, shaft_d2, coupling_od, \
+coupling_length, gap
+Connects two shafts end-to-end. \
+Constraint: coupling_od >= 1.5 * max(shaft_d1, shaft_d2). coupling_length > gap.
+
+11. "hex_standoff" — fields: reasoning, assembly_type, bore_d, flat_to_flat, length, \
+male_stud, stud_d, stud_length
+PCB standoffs, spacers, pillar nuts. \
+Constraint: flat_to_flat >= 1.5 * bore_d. If male_stud=True, stud_d < flat_to_flat.
+
+Input: "300mm rack, module 2, 20-tooth pinion, 8mm wide"
+{"reasoning":"CNC axis rack","assembly_type":"rack_and_pinion","rack_length":300,\
+"rack_width":8,"rack_height":10,"module_val":2,"pinion_teeth":20,"pinion_thickness":8,\
+"bore_d":5}
+
+Input: "worm gear, 40 teeth, 2-start, module 2"
+{"reasoning":"40:2 = 20:1 reduction","assembly_type":"worm_gear","worm_starts":2,\
+"wheel_teeth":40,"module_val":2,"worm_length":40,"wheel_thickness":10,"bore_d":5,\
+"worm_bore_d":5}
+
+Input: "compression spring, 1.5mm wire, 20mm OD, 60mm free length, 8 coils"
+{"reasoning":"Standard compression spring","assembly_type":"helical_spring","wire_d":1.5,\
+"coil_od":20,"free_length":60,"coil_count":8,"spring_type":"compression"}
+
+Input: "rigid coupling for 8mm and 10mm shafts, 25mm OD"
+{"reasoning":"Mismatched bore rigid coupling","assembly_type":"shaft_coupling",\
+"shaft_d1":8,"shaft_d2":10,"coupling_od":25,"coupling_length":30,"gap":1.5}
+
+Input: "M3 hex standoff 10mm"
+{"reasoning":"Standard M3 PCB standoff","assembly_type":"hex_standoff","bore_d":3,\
+"flat_to_flat":5.5,"length":10,"male_stud":false,"stud_d":3,"stud_length":6}
 """
 
 _template_agents: dict[str, Any] = {}

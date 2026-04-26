@@ -140,7 +140,102 @@ class FlangedTubeSpec(BaseModel):
         return self
 
 
+class RackAndPinionSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["rack_and_pinion"] = "rack_and_pinion"
+    rack_length: float = Field(gt=50, lt=1000, description="Rack total length mm")
+    rack_width: float = Field(gt=5, lt=100, description="Rack bar width mm")
+    rack_height: float = Field(gt=5, lt=100, description="Rack base height mm (excluding teeth)")
+    module_val: float = Field(gt=0.5, lt=10, description="Gear module mm")
+    pinion_teeth: int = Field(ge=8, le=80, description="Pinion tooth count")
+    pinion_thickness: float = Field(gt=1, lt=50, description="Pinion face width mm")
+    bore_d: float = Field(default=5, gt=0, lt=50, description="Pinion bore diameter mm")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.rack_width < self.module_val * 2:
+            raise ValueError(f"rack_width must be >= {self.module_val * 2:.1f} (2 × module_val)")
+        return self
+
+
+class WormGearSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["worm_gear"] = "worm_gear"
+    worm_starts: int = Field(ge=1, le=4, description="Number of worm thread starts (determines ratio)")
+    wheel_teeth: int = Field(ge=8, le=80, description="Worm wheel tooth count")
+    module_val: float = Field(gt=0.5, lt=10, description="Gear module mm")
+    worm_length: float = Field(gt=10, lt=200, description="Worm shaft axial length mm")
+    wheel_thickness: float = Field(gt=1, lt=50, description="Wheel face width mm")
+    bore_d: float = Field(default=5, gt=0, lt=50, description="Wheel bore diameter mm")
+    worm_bore_d: float = Field(default=5, gt=0, lt=50, description="Worm shaft bore diameter mm")
+
+
+class HelicalSpringSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["helical_spring"] = "helical_spring"
+    wire_d: float = Field(gt=0.3, lt=20, description="Wire diameter mm")
+    coil_od: float = Field(gt=2, lt=200, description="Coil outer diameter mm")
+    free_length: float = Field(gt=5, lt=500, description="Free (unloaded) length mm")
+    coil_count: float = Field(gt=1, lt=50, description="Number of active coils")
+    spring_type: Literal["compression", "extension", "torsion"] = Field(default="compression")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.coil_od <= self.wire_d * 2:
+            raise ValueError(f"coil_od ({self.coil_od}) must be > 2 × wire_d ({self.wire_d * 2:.1f})")
+        return self
+
+
+class ShaftCouplingSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["shaft_coupling"] = "shaft_coupling"
+    shaft_d1: float = Field(gt=1, lt=100, description="First shaft bore diameter mm")
+    shaft_d2: float = Field(gt=1, lt=100, description="Second shaft bore diameter mm")
+    coupling_od: float = Field(gt=3, lt=200, description="Coupling outer diameter mm")
+    coupling_length: float = Field(gt=5, lt=300, description="Total coupling body length mm")
+    gap: float = Field(default=1.5, gt=0, lt=20, description="Gap between the two halves mm")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        min_od = max(self.shaft_d1, self.shaft_d2) * 1.5
+        if self.coupling_od < min_od:
+            raise ValueError(f"coupling_od must be >= {min_od:.1f} (1.5 × max shaft diameter)")
+        if self.coupling_length <= self.gap:
+            raise ValueError("coupling_length must exceed gap")
+        return self
+
+
+class HexStandoffSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["hex_standoff"] = "hex_standoff"
+    bore_d: float = Field(gt=1, lt=30, description="Bore / thread diameter mm")
+    flat_to_flat: float = Field(gt=3, lt=50, description="Hex flat-to-flat (AF) distance mm")
+    length: float = Field(gt=3, lt=200, description="Standoff body length mm")
+    male_stud: bool = Field(default=False, description="Add male threaded stud at one end")
+    stud_d: float = Field(default=3, gt=0, lt=30, description="Male stud outer diameter mm")
+    stud_length: float = Field(default=6, gt=0, lt=50, description="Male stud length mm")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.flat_to_flat < self.bore_d * 1.5:
+            raise ValueError(f"flat_to_flat must be >= {self.bore_d * 1.5:.1f} (1.5 × bore_d)")
+        if self.male_stud and self.stud_d >= self.flat_to_flat:
+            raise ValueError("stud_d must be < flat_to_flat")
+        return self
+
+
 AssemblySpec = Annotated[
-    Union[FinnedRocketBodySpec, GearTrainSpec, PlanetaryGearSpec, BushingAssemblySpec, FlangedTubeSpec],
+    Union[
+        FinnedRocketBodySpec,
+        GearTrainSpec,
+        PlanetaryGearSpec,
+        BushingAssemblySpec,
+        FlangedTubeSpec,
+        RackAndPinionSpec,
+        WormGearSpec,
+        HelicalSpringSpec,
+        ShaftCouplingSpec,
+        HexStandoffSpec,
+    ],
     Field(discriminator="assembly_type"),
 ]

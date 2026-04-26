@@ -16,6 +16,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from agents import PROVIDER_CONFIG  # noqa: E402
 from mubit_client import seed_template_library
+from routers.batch import router as batch_router
 from routers.conference import router as conference_router
 from routers.generate import router as generate_router
 from routers.meetings import router as meetings_router
@@ -59,6 +60,7 @@ app.add_middleware(
 
 logfire.instrument_fastapi(app)
 
+app.include_router(batch_router)
 app.include_router(generate_router)
 app.include_router(meetings_router)
 app.include_router(conference_router)
