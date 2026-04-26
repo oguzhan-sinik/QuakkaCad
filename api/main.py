@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv(Path(__file__).parent / ".env")
 
 from agents import PROVIDER_CONFIG  # noqa: E402
-from mubit_client import ensure_agents_registered, seed_template_library
+from mubit_client import seed_template_library
 from routers.conference import router as conference_router
 from routers.generate import router as generate_router
 from routers.meetings import router as meetings_router
@@ -27,16 +27,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Register agents then seed template library — both non-blocking, no-op if key absent
+    # Seed MuBit template library in background — non-blocking, no-op if key absent
     asyncio.create_task(_init_mubit())
     yield
 
 
 async def _init_mubit() -> None:
-    try:
-        await ensure_agents_registered()
-    except Exception as e:
-        logger.warning("MuBit agent registration failed at startup: %s", e)
     try:
         await seed_template_library()
     except Exception as e:

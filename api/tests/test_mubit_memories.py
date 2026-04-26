@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 MUBIT_API_KEY = os.getenv("MUBIT_API_KEY", "")
+MUBIT_PROJECT_ID = os.getenv("MUBIT_PROJECT_ID", "")
 TEMPLATE_LIBRARY_RUN_ID = "quakkacad:template-library:v1"
 
 
@@ -83,7 +84,7 @@ async def main():
     # ------------------------------------------------------------------
     section(f"lessons: session={TEMPLATE_LIBRARY_RUN_ID}")
     try:
-        result = await call(client, "lessons", session_id=TEMPLATE_LIBRARY_RUN_ID)
+        result = await call(client, "lessons", run_id=TEMPLATE_LIBRARY_RUN_ID)
         dump(result)
     except Exception as ex:
         print(f"ERROR: {ex}")
@@ -102,23 +103,32 @@ async def main():
         print(f"ERROR: {ex}")
 
     # ------------------------------------------------------------------
-    # 4. get_run_history
+    # 4. get_run_history (via advanced)
     # ------------------------------------------------------------------
     section(f"get_run_history: session={TEMPLATE_LIBRARY_RUN_ID}")
     try:
-        result = await call(client, "get_run_history", run_id=TEMPLATE_LIBRARY_RUN_ID)
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.advanced.get_run_history(
+                project_id=MUBIT_PROJECT_ID,
+                run_id=TEMPLATE_LIBRARY_RUN_ID,
+            ),
+        )
         dump(result)
     except Exception as ex:
         print(f"ERROR: {ex}")
 
     # ------------------------------------------------------------------
-    # 5. query
+    # 5. query (via advanced)
     # ------------------------------------------------------------------
     section(f"query: session={TEMPLATE_LIBRARY_RUN_ID}")
     try:
-        result = await call(client, "query",
-            session_id=TEMPLATE_LIBRARY_RUN_ID,
-            query="what templates are available?",
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.advanced.query(
+                run_id=TEMPLATE_LIBRARY_RUN_ID,
+                query="what templates are available?",
+            ),
         )
         dump(result)
     except Exception as ex:

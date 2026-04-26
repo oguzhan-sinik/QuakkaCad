@@ -22,7 +22,7 @@ from agents import (
     run_planner_chunked,
 )
 from cadquery_compiler import compile_cadquery
-from mubit_client import record_generation_outcome, record_template_outcome, reflect_on_session
+from mubit_client import record_template_outcome
 from openscad_compiler import compile_openscad
 from schemas import (
     FEAAnalysis,
@@ -399,15 +399,6 @@ async def trigger_openscad(
     meta["compile_ok"] = compile_ok
     meta["fix_iterations"] = fix_iterations
 
-    session_id = meta.get("session_id")
-    if session_id:
-        asyncio.create_task(record_generation_outcome(
-            session_id=session_id,
-            success=bool(compile_ok),
-            error_msg=compile_stderr,
-        ))
-        asyncio.create_task(reflect_on_session(session_id))
-
     logger.info(
         "model generation complete for meeting %s: %d fix attempt(s), compile_ok=%s",
         meeting_id, fix_iterations, compile_ok,
@@ -484,15 +475,6 @@ async def trigger_refine(
 
     meta["compile_ok"] = compile_ok
     meta["fix_iterations"] = fix_iterations
-
-    session_id = meta.get("session_id")
-    if session_id:
-        asyncio.create_task(record_generation_outcome(
-            session_id=session_id,
-            success=bool(compile_ok),
-            error_msg=compile_stderr,
-        ))
-        asyncio.create_task(reflect_on_session(session_id))
 
     logger.info(
         "refine complete for meeting %s: %d fix attempt(s), compile_ok=%s",

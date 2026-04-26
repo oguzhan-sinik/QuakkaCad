@@ -7,12 +7,6 @@ The MuBit SDK is synchronous, so all calls are run in a thread pool to avoid
 blocking the async event loop.  A short timeout prevents cold-start hangs.
 
 SDK reference: https://docs.mubit.ai/sdk/sdk-methods
-
-Correct helper signatures (Python SDK >=0.6.0):
-  client.remember(session_id, agent_id, content, intent, metadata)
-  client.get_context(session_id, query, mode, max_token_budget)
-  client.reflect(session_id)
-  client.record_outcome(session_id, agent_id, reference_id, outcome, signal, rationale)
 """
 
 from __future__ import annotations
@@ -30,12 +24,7 @@ _disabled = False
 # Max seconds to wait for any single MuBit call (prevents first-call hang)
 _TIMEOUT = 5
 
-# Stable agent IDs used across all helpers
 _AGENT_TEMPLATE = "template-classifier"
-_AGENT_OPENSCAD = "openscad-generator"
-_AGENT_PLANNER = "planner"
-_AGENT_OPENSCAD_MEETING = "openscad-meeting"
-_AGENT_OPENSCAD_REFINE = "openscad-refine"
 
 # One stable run_id for the shared template-library seed data.
 # Using a fixed ID means re-seeding at startup is idempotent (MuBit deduplicates
@@ -87,162 +76,6 @@ async def _run_sync(fn, *args, **kwargs) -> Any:
 
 # ---------------------------------------------------------------------------
 # General helpers (used by generate / planner / openscad-meeting agents)
-# ---------------------------------------------------------------------------
-
-
-async def get_generation_context(
-    agent_id: str,
-    session_id: str,
-) -> str:
-    """Retrieve past lessons/context for this agent before an LLM call.
-
-    Uses get_context() with a query tailored to the agent role so MuBit
-    returns the most relevant lessons (parameter ranges, past errors, etc.).
-    """
-    client = _get_client()
-    if client is None:
-        return ""
-
-    query_for_agent = {
-        _AGENT_OPENSCAD: "OpenSCAD generation lessons: syntax errors avoided, parameter defaults, compilable patterns",
-        _AGENT_PLANNER: "CAD planning lessons: block extraction, variable locking, transcript relevance",
-        _AGENT_OPENSCAD_MEETING: "OpenSCAD meeting generation: enclosure geometry, plan block mapping",
-        _AGENT_OPENSCAD_REFINE: "OpenSCAD refinement: quality improvements, extended thinking, compile fixes",
-        _AGENT_TEMPLATE: "Template classifier lessons: assembly type selection, parameter ranges, unit conversion",
-    }.get(agent_id, f"lessons for {agent_id} agent")
-
-    try:
-        result = await _run_sync(
-            client.recall,
-            session_id=session_id,
-            query=query_for_agent,
-        )
-        if not result:
-            logger.debug("MuBit context empty for agent=%s", agent_id)
-            return ""
-
-        parts = []
-        final_answer = (result.get("final_answer") or "").strip()
-        if final_answer:
-            parts.append(final_answer)
-        for ev in result.get("evidence") or []:
-            content = (ev.get("content") or "").strip()
-            if content and ev.get("entry_type") in ("lesson", "trace"):
-                parts.append(content)
-
-        text = "\n\n".join(parts).strip()
-        if text:
-            logger.info("MuBit context retrieved for agent=%s (%d chars)", agent_id, len(text))
-        else:
-            logger.debug("MuBit context empty for agent=%s", agent_id)
-        return text
-    except Exception as e:
-        logger.warning("MuBit get_context failed: %s", e)
-        return ""
-
-
-async def remember_generation(
-    agent_id: str,
-    session_id: str,
-    prompt: str,
-    code: str,
-    model_used: str,
-) -> None:
-    """Store a generation interaction as a fact in MuBit memory."""
-    client = _get_client()
-    if client is None:
-        return
-
-    try:
-        content = (
-            f"Prompt: {prompt[:500]}\n"
-            f"Model: {model_used}\n"
-            f"Generated code ({len(code)} chars):\n{code[:1000]}"
-        )
-        await _run_sync(
-            client.remember,
-            session_id=session_id,
-            agent_id=agent_id,
-            content=content,
-            intent="trace",
-            metadata={"model": model_used, "code_length": len(code)},
-        )
-        logger.info("MuBit memory saved: agent=%s session=%s code_length=%d", agent_id, session_id, len(code))
-    except Exception as e:
-        logger.warning("MuBit remember failed: %s", e)
-
-
-async def record_generation_outcome(
-    session_id: str,
-    success: bool,
-    error_msg: str | None = None,
-    agent_id: str = _AGENT_OPENSCAD_MEETING,
-) -> None:
-    """Reflect on the session and record the compilation outcome as reinforcement.
-
-    MuBit's record_outcome() requires a lesson reference_id (from reflect()),
-    so we call reflect() first to extract lessons, then reinforce the most
-    recent lesson with the outcome signal.
-    """
-    client = _get_client()
-    if client is None:
-        return
-
-    try:
-        # Reflect to extract lessons from this session
-        reflection = await _run_sync(client.reflect, session_id=session_id)
-        if not reflection:
-            return
-
-        lessons = reflection.get("lessons") or []
-        logger.info("MuBit reflect: %d lesson(s) extracted for session=%s", len(lessons), session_id)
-        lesson_id = next(
-            (l.get("lesson_id") for l in lessons if l.get("lesson_id")),
-            None,
-        )
-        if not lesson_id:
-            logger.debug("MuBit reflect: no lesson_id found, skipping record_outcome")
-            return
-
-        outcome = "success" if success else "failure"
-        signal = 1.0 if success else 0.0
-        rationale = (
-            "OpenSCAD/CadQuery compilation succeeded"
-            if success
-            else f"Compilation failed: {error_msg or 'unknown error'}"
-        )
-
-        await _run_sync(
-            client.record_outcome,
-            session_id=session_id,
-            agent_id=agent_id,
-            reference_id=lesson_id,
-            outcome=outcome,
-            signal=signal,
-            rationale=rationale,
-        )
-        logger.info("MuBit outcome recorded: agent=%s session=%s outcome=%s", agent_id, session_id, outcome)
-    except Exception as e:
-        logger.warning("MuBit record_outcome failed: %s", e)
-
-
-async def reflect_on_session(session_id: str) -> None:
-    """Extract lessons from this generation session.
-
-    Note: record_generation_outcome() already calls reflect() internally.
-    Only call this standalone when you want to trigger reflection without
-    recording a reinforcement outcome (e.g. for the planner agent).
-    """
-    client = _get_client()
-    if client is None:
-        return
-
-    try:
-        await _run_sync(client.reflect, session_id=session_id)
-    except Exception as e:
-        logger.warning("MuBit reflect failed: %s", e)
-
-
 # ---------------------------------------------------------------------------
 # Template library helpers
 # ---------------------------------------------------------------------------
@@ -341,92 +174,6 @@ def _build_template_seed_items() -> list[dict]:
         },
     ]
     return items
-
-
-_AGENT_DEFINITIONS = [
-    {
-        "agent_id": _AGENT_TEMPLATE,
-        "role": "template classifier",
-        "description": "Classifies natural-language CAD prompts into typed assembly specs with validated parameters",
-        "system_prompt_content": (
-            "You are a CAD template classifier. Given a user request, select the most appropriate "
-            "assembly template and extract precise parameter values. Output valid JSON matching the "
-            "AssemblySpec schema. Respect all engineering constraints (bore < outer diameter, "
-            "fin chord ≤ tube length, bolt circle between tube OD and flange OD, etc.)."
-        ),
-    },
-    {
-        "agent_id": _AGENT_OPENSCAD,
-        "role": "OpenSCAD code generator",
-        "description": "Generates compilable OpenSCAD source from CAD planning blocks and meeting transcripts",
-        "system_prompt_content": (
-            "You are an OpenSCAD code generator. Produce syntactically correct, compilable OpenSCAD "
-            "source. Use parametric variables, avoid hardcoded magic numbers, and structure code with "
-            "named modules. Never emit CadQuery or Python — only OpenSCAD."
-        ),
-    },
-    {
-        "agent_id": _AGENT_PLANNER,
-        "role": "CAD planner",
-        "description": "Extracts structured CAD planning blocks from meeting transcripts",
-        "system_prompt_content": (
-            "You are a CAD planning agent. Analyse meeting transcripts and extract structured "
-            "design intent: components, dimensions, materials, and constraints. Output clean "
-            "planning blocks that downstream code-generation agents can consume directly."
-        ),
-    },
-    {
-        "agent_id": _AGENT_OPENSCAD_MEETING,
-        "role": "OpenSCAD meeting agent",
-        "description": "Generates OpenSCAD models from meeting-derived CAD plan blocks",
-        "system_prompt_content": (
-            "You are an OpenSCAD generation agent working from structured CAD plan blocks. "
-            "Map each plan block to geometry, honour all stated dimensions and constraints, "
-            "and produce a single compilable OpenSCAD file."
-        ),
-    },
-    {
-        "agent_id": _AGENT_OPENSCAD_REFINE,
-        "role": "OpenSCAD refinement agent",
-        "description": "Iteratively fixes and improves OpenSCAD source until it compiles cleanly",
-        "system_prompt_content": (
-            "You are an OpenSCAD refinement agent. Given OpenSCAD source and compiler error output, "
-            "diagnose and fix all syntax and semantic errors. Preserve the original design intent "
-            "while ensuring the output compiles without warnings."
-        ),
-    },
-]
-
-
-async def ensure_agents_registered() -> None:
-    """Create MuBit agent definitions for all QuakkaCad agents.
-
-    Safe to call on every startup — exceptions from duplicate creation are
-    caught and logged so a pre-existing agent never blocks startup.
-    """
-    client = _get_client()
-    if client is None:
-        return
-
-    project_id = os.getenv("MUBIT_PROJECT_ID", "")
-    if not project_id:
-        logger.warning("MUBIT_PROJECT_ID not set — skipping agent registration")
-        return
-
-    for defn in _AGENT_DEFINITIONS:
-        try:
-            await _run_sync(
-                client.create_agent_definition,
-                project_id=project_id,
-                agent_id=defn["agent_id"],
-                role=defn["role"],
-                description=defn["description"],
-                system_prompt_content=defn["system_prompt_content"],
-            )
-            logger.info("MuBit agent registered: %s", defn["agent_id"])
-        except Exception as e:
-            # Already exists or transient error — either way non-fatal
-            logger.debug("MuBit agent registration skipped for %s: %s", defn["agent_id"], e)
 
 
 async def seed_template_library() -> None:
