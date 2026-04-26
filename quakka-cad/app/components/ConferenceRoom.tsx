@@ -55,10 +55,10 @@ interface ConferenceRoomProps {
   onRunTemplate?: () => void;
   templateLoading?: boolean;
   onTemplateOutcome?: (success: boolean, error?: string) => void;
-  onRunFEA?: () => void;
+  onRunFEA?: (meshData?: string) => void;
   feaLoading?: boolean;
   feaData?: FEAAnalysisData | null;
-  onRunDrawing?: () => void;
+  onRunDrawing?: (screenshots?: string[]) => void;
   drawingLoading?: boolean;
   drawingData?: TechnicalDrawingData | null;
 }

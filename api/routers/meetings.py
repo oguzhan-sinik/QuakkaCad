@@ -546,6 +546,9 @@ async def trigger_cadquery(
             step_bytes = cq_result.step_bytes
             if cq_result.success:
                 break
+            # Don't retry on system-level crashes (segfault)
+            if "SIGSEGV" in (cq_result.stderr or ""):
+                break
             if attempt < max_fix_iterations:
                 fixed, _ = await run_cadquery_fix(current_script=script, stderr=cq_result.stderr)
                 fix_iterations += 1
@@ -572,6 +575,10 @@ async def trigger_cadquery(
         fix_iterations=fix_iterations,
     )
     store.models[meeting_id].append(iteration)
+
+    # Cache STL for FEA
+    if stl_bytes:
+        store.stl_cache[iteration.id] = stl_bytes
 
     meta["compile_ok"] = compile_ok
     meta["fix_iterations"] = fix_iterations
@@ -678,9 +685,16 @@ class FEAResult(BaseModel):
     meta: dict
 
 
+class FEARequest(BaseModel):
+    mesh_base64: str | None = None
+
+
 @router.post("/meetings/{meeting_id}/agent/fea", response_model=FEAResult, tags=["agents"])
-async def trigger_fea_analysis(meeting_id: UUID):
-    """Run FEA-style structural analysis on the latest model iteration."""
+async def trigger_fea_analysis(meeting_id: UUID, body: FEARequest = FEARequest()):
+    """Run real mesh-based FEA on the latest model, with LLM interpretation."""
+    import base64
+    import time
+
     _get_meeting_or_404(meeting_id)
 
     current_models = store.models[meeting_id]
@@ -690,15 +704,126 @@ async def trigger_fea_analysis(meeting_id: UUID):
     latest_model = current_models[-1]
     current_blocks = store.blocks[meeting_id]
 
+    # 1. Get STL bytes — prefer frontend mesh, then cache, then recompile
+    stl_bytes: bytes | None = None
+
+    if body.mesh_base64:
+        try:
+            raw = base64.b64decode(body.mesh_base64)
+            # Check if it's STL (binary STL starts with 80 byte header) or OFF (starts with "OFF")
+            if raw[:3] == b"OFF" or raw[:4] == b"COFF":
+                # Convert OFF to STL via meshio
+                import tempfile
+                import meshio
+                from pathlib import Path
+                with tempfile.TemporaryDirectory() as td:
+                    off_path = Path(td) / "mesh.off"
+                    stl_out = Path(td) / "mesh.stl"
+                    off_path.write_bytes(raw)
+                    mesh = meshio.read(str(off_path))
+                    meshio.write(str(stl_out), mesh)
+                    stl_bytes = stl_out.read_bytes()
+                    logger.info("Converted frontend OFF to STL: %d bytes", len(stl_bytes))
+            else:
+                stl_bytes = raw
+                logger.info("Using frontend STL mesh: %d bytes", len(stl_bytes))
+        except Exception as e:
+            logger.warning("Failed to decode frontend mesh: %s", e)
+
+    if not stl_bytes:
+        stl_bytes = store.stl_cache.get(latest_model.id)
+
+    if not stl_bytes and latest_model.script_language == "cadquery":
+        try:
+            cq_result = await compile_cadquery(latest_model.script)
+            if cq_result.success and cq_result.stl_bytes:
+                stl_bytes = cq_result.stl_bytes
+                store.stl_cache[latest_model.id] = stl_bytes
+        except Exception as e:
+            logger.warning("CadQuery recompile for FEA failed: %s", e)
+
+    if not stl_bytes:
+        # Fallback to LLM-only FEA
+        try:
+            analysis_dict, meta = await run_fea_analysis(
+                script=latest_model.script, blocks=current_blocks,
+            )
+            analysis = FEAAnalysis(
+                model_iteration_id=latest_model.id,
+                summary=analysis_dict.get("summary", ""),
+                stress_points=analysis_dict.get("stress_points", []),
+                recommendations=analysis_dict.get("recommendations", []),
+                material_notes=analysis_dict.get("material_notes", ""),
+                safety_factor=analysis_dict.get("safety_factor"),
+                load_cases=analysis_dict.get("load_cases", []),
+                full_report=analysis_dict.get("full_report", ""),
+                stress_script=analysis_dict.get("stress_script", ""),
+            )
+            return FEAResult(analysis=analysis, meta=meta)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"FEA error: {e}")
+
+    # 2. Run real mesh-based FEA
+    t0 = time.perf_counter()
     try:
-        analysis_dict, meta = await run_fea_analysis(
-            script=latest_model.script,
-            blocks=current_blocks,
-        )
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        from fea_solver import run_mesh_fea
+        solver_result = await run_mesh_fea(stl_bytes)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"FEA agent error: {e}")
+        logger.error("Mesh FEA failed, falling back to LLM: %s", e, exc_info=True)
+        # Fallback
+        try:
+            analysis_dict, meta = await run_fea_analysis(
+                script=latest_model.script, blocks=current_blocks,
+            )
+            analysis = FEAAnalysis(
+                model_iteration_id=latest_model.id,
+                summary=analysis_dict.get("summary", ""),
+                stress_points=analysis_dict.get("stress_points", []),
+                recommendations=analysis_dict.get("recommendations", []),
+                material_notes=analysis_dict.get("material_notes", ""),
+                safety_factor=analysis_dict.get("safety_factor"),
+                load_cases=analysis_dict.get("load_cases", []),
+                full_report=analysis_dict.get("full_report", ""),
+                stress_script=analysis_dict.get("stress_script", ""),
+            )
+            return FEAResult(analysis=analysis, meta=meta)
+        except Exception as e2:
+            raise HTTPException(status_code=502, detail=f"FEA error: {e2}")
+
+    solve_ms = (time.perf_counter() - t0) * 1000
+
+    # 3. LLM interpretation of real solver data
+    try:
+        stress_summary = (
+            f"Max Von Mises: {solver_result.max_von_mises:.2f} MPa, "
+            f"Min: {solver_result.min_von_mises:.2f} MPa, "
+            f"Avg: {solver_result.avg_von_mises:.2f} MPa, "
+            f"Safety Factor: {solver_result.safety_factor:.2f}"
+        )
+        top_points = "\n".join(
+            f"  - ({p['x']:.1f}, {p['y']:.1f}, {p['z']:.1f}): {p['stress_mpa']:.2f} MPa"
+            for p in solver_result.stress_points
+        )
+        interpretation_prompt = (
+            f"FEA SOLVER RESULTS (real computation, not estimated):\n"
+            f"{stress_summary}\n"
+            f"Top stress concentration points:\n{top_points}\n\n"
+            f"DESIGN:\n{latest_model.script[:500]}\n\n"
+            f"Provide engineering interpretation: summary, recommendations, material notes."
+        )
+        analysis_dict, llm_meta = await run_fea_analysis(
+            script=interpretation_prompt, blocks=current_blocks,
+        )
+    except Exception:
+        # If LLM fails, use solver data directly
+        analysis_dict = {
+            "summary": f"FEA analysis complete. Peak stress {solver_result.max_von_mises:.1f} MPa with safety factor {solver_result.safety_factor:.1f}.",
+            "stress_points": [f"({p['x']:.1f}, {p['y']:.1f}, {p['z']:.1f}): {p['stress_mpa']:.1f} MPa" for p in solver_result.stress_points],
+            "recommendations": ["Review stress concentration areas for potential failure modes."],
+            "material_notes": "Analysis assumes PLA (E=3500 MPa, yield=50 MPa).",
+            "load_cases": ["Gravity (self-weight)"],
+            "full_report": f"Peak Von Mises stress: {solver_result.max_von_mises:.2f} MPa\nSafety factor: {solver_result.safety_factor:.2f}",
+        }
 
     analysis = FEAAnalysis(
         model_iteration_id=latest_model.id,
@@ -706,13 +831,23 @@ async def trigger_fea_analysis(meeting_id: UUID):
         stress_points=analysis_dict.get("stress_points", []),
         recommendations=analysis_dict.get("recommendations", []),
         material_notes=analysis_dict.get("material_notes", ""),
-        safety_factor=analysis_dict.get("safety_factor"),
+        safety_factor=solver_result.safety_factor,
         load_cases=analysis_dict.get("load_cases", []),
         full_report=analysis_dict.get("full_report", ""),
-        stress_script=analysis_dict.get("stress_script", ""),
+        stress_off=solver_result.stress_off,
+        max_stress_mpa=solver_result.max_von_mises,
+        min_stress_mpa=solver_result.min_von_mises,
     )
 
-    logger.info("FEA analysis complete for meeting %s, model %s", meeting_id, latest_model.id)
+    meta = {
+        "provider": "SfePy mesh FEA + LLM interpretation",
+        "solve_ms": round(solve_ms, 1),
+        "max_stress_mpa": solver_result.max_von_mises,
+        "safety_factor": solver_result.safety_factor,
+    }
+
+    logger.info("Mesh FEA complete for meeting %s: max=%.1f MPa, SF=%.1f, solve=%.0fms",
+                meeting_id, solver_result.max_von_mises, solver_result.safety_factor, solve_ms)
     return FEAResult(analysis=analysis, meta=meta)
 
 
@@ -726,9 +861,13 @@ class TechnicalDrawingResult(BaseModel):
     meta: dict
 
 
+class DrawingRequest(BaseModel):
+    reference_images: list[str] = []
+
+
 @router.post("/meetings/{meeting_id}/agent/drawing", tags=["agents"])
-async def trigger_technical_drawing(meeting_id: UUID):
-    """Generate a technical drawing using fal.ai gpt-image-2 based on the latest model."""
+async def trigger_technical_drawing(meeting_id: UUID, body: DrawingRequest = DrawingRequest()):
+    """Generate a technical drawing using fal.ai with optional 3D view screenshots."""
     import os
     import time
 
@@ -748,7 +887,7 @@ async def trigger_technical_drawing(meeting_id: UUID):
     current_blocks = store.blocks[meeting_id]
 
     try:
-        # Build a description from plan blocks for the drawing prompt
+        # Build a description from plan blocks
         block_descriptions = []
         for b in current_blocks:
             try:
@@ -764,23 +903,101 @@ async def trigger_technical_drawing(meeting_id: UUID):
 
         design_desc = "; ".join(block_descriptions) if block_descriptions else "parametric 3D enclosure"
 
-        prompt = (
-            f"Technical engineering drawing with precise dimensions, orthographic projection views "
-            f"(front, side, top), section views, and dimension annotations. "
-            f"Professional drafting style on white background with thin black lines. "
-            f"ISO standard technical drawing format. "
-            f"The object: {design_desc}. "
-            f"Show all critical dimensions in millimeters, include a title block, "
-            f"scale reference, and standard engineering drawing annotations."
-        )
+        # Extract dimensions from the OpenSCAD/CadQuery script
+        import re
+        dimensions = []
+        for line in latest_model.script.split("\n"):
+            # Match variable assignments like: width = 60; or tube_outer_d = 90
+            m = re.match(r"^\s*(\w+)\s*=\s*([\d.]+)\s*;?\s*(?://\s*(.+))?", line)
+            if m and not m.group(1).startswith("$"):
+                name = m.group(1).replace("_", " ")
+                val = m.group(2)
+                comment = m.group(3) or ""
+                dimensions.append(f"{name}: {val}mm" + (f" ({comment.strip()})" if comment.strip() else ""))
+        dim_text = "; ".join(dimensions[:15]) if dimensions else ""
 
-        t0 = time.perf_counter()
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
-            resp = await client.post(
-                "https://fal.run/fal-ai/flux/schnell",
-                headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
-                json={"prompt": prompt, "image_size": "landscape_16_9", "num_images": 1},
+        if body.reference_images:
+            n_imgs = len(body.reference_images)
+            prompt = (
+                f"Convert these {n_imgs} 3D CAD model screenshots (front elevation, top/plan view, "
+                f"and isometric 3/4 perspective) into a professional ISO technical engineering drawing. "
+                f"Create orthographic projection layout with front view, side view, and top view. "
+                f"Add precise dimension lines with arrows and annotations in millimeters for ALL key features. "
+                f"Use thin black lines on white background. Professional drafting style. "
+                f"Include a title block in the bottom right corner. "
+                f"The object: {design_desc}. "
             )
+            if dim_text:
+                prompt += f"Key dimensions to annotate: {dim_text}. "
+        else:
+            prompt = (
+                f"Technical engineering drawing with precise dimensions, orthographic projection views "
+                f"(front, side, top), section views, and dimension annotations. "
+                f"Professional drafting style on white background with thin black lines. "
+                f"ISO standard technical drawing format. "
+                f"The object: {design_desc}. "
+                f"Show all critical dimensions in millimeters, include a title block. "
+            )
+            if dim_text:
+                prompt += f"Key dimensions: {dim_text}. "
+
+        has_refs = len(body.reference_images) > 0
+        t0 = time.perf_counter()
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
+            fal_headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
+
+            if has_refs:
+                # Upload screenshots to fal.ai storage to get real URLs
+                import base64 as b64mod
+                image_urls = []
+                for idx, b64img in enumerate(body.reference_images[:3]):
+                    try:
+                        img_bytes = b64mod.b64decode(b64img)
+                        up_resp = await client.post(
+                            "https://fal.ai/api/storage/upload/url",
+                            headers={"Authorization": f"Key {fal_key}", "Content-Type": "image/png"},
+                            content=img_bytes,
+                        )
+                        if up_resp.status_code == 200:
+                            up_data = up_resp.json()
+                            url = up_data.get("file_url") or up_data.get("url") or up_data.get("access_url", "")
+                            if url:
+                                image_urls.append(url)
+                                logger.info("Uploaded screenshot %d to fal: %s", idx, url[:80])
+                            else:
+                                logger.warning("Upload %d returned no URL: %s", idx, up_data)
+                        else:
+                            logger.warning("Upload %d failed: %d %s", idx, up_resp.status_code, up_resp.text[:200])
+                    except Exception as e:
+                        logger.warning("Upload %d error: %s", idx, e)
+
+                if not image_urls:
+                    logger.warning("All uploads failed, falling back to text-only generation")
+                    has_refs = False
+
+            if has_refs and image_urls:
+                logger.info("Sending %d uploaded reference images to GPT Image 2 Edit", len(image_urls))
+                # GPT Image 2 Edit (high-quality image-to-image)
+                resp = await client.post(
+                    "https://fal.run/openai/gpt-image-2/edit",
+                    headers=fal_headers,
+                    json={
+                        "prompt": prompt,
+                        "image_urls": image_urls,
+                        "quality": "high",
+                        "output_format": "png",
+                        "num_images": 1,
+                    },
+                )
+            else:
+                # No reference images — Flux Schnell (text-to-image)
+                resp = await client.post(
+                    "https://fal.run/fal-ai/flux/schnell",
+                    headers=fal_headers,
+                    json={"prompt": prompt, "image_size": "landscape_16_9", "num_images": 1},
+                )
+
             resp.raise_for_status()
             result = resp.json()
 
@@ -809,7 +1026,7 @@ async def trigger_technical_drawing(meeting_id: UUID):
         )
 
         meta = {
-            "provider": "fal.ai / Flux Schnell",
+            "provider": f"fal.ai / {'GPT Image 2 Edit' if has_refs else 'Flux Schnell'}",
             "latency_ms": round(latency_ms, 1),
         }
 

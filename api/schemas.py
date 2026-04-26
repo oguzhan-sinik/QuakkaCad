@@ -141,7 +141,10 @@ class FEAAnalysis(BaseModel):
     safety_factor: Optional[float] = Field(default=None, description="Estimated safety factor if determinable")
     load_cases: List[str] = Field(default_factory=list, description="Load scenarios considered")
     full_report: str = Field(description="Detailed FEA-style analysis report in markdown")
-    stress_script: str = Field(default="", description="OpenSCAD script with colour heat-map showing stress regions")
+    stress_script: str = Field(default="", description="OpenSCAD script with colour heat-map (legacy)")
+    stress_off: str = Field(default="", description="OFF mesh with per-face stress colors from solver")
+    max_stress_mpa: Optional[float] = Field(default=None, description="Peak Von Mises stress in MPa")
+    min_stress_mpa: Optional[float] = Field(default=None, description="Minimum Von Mises stress in MPa")
 
 
 class TechnicalDrawing(BaseModel):

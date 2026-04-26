@@ -25,6 +25,9 @@ export interface FEAAnalysisData {
   load_cases: string[];
   full_report: string;
   stress_script: string;
+  stress_off: string;
+  max_stress_mpa: number | null;
+  min_stress_mpa: number | null;
 }
 
 export interface TechnicalDrawingData {
@@ -54,10 +57,10 @@ interface CadPanelProps {
   templateLoading?: boolean;
   /** Called when WASM compiles a template-generated model (success or failure). */
   onTemplateOutcome?: (success: boolean, error?: string) => void;
-  onRunFEA?: () => void;
+  onRunFEA?: (meshData?: string) => void;
   feaLoading?: boolean;
   feaData?: FEAAnalysisData | null;
-  onRunDrawing?: () => void;
+  onRunDrawing?: (screenshots?: string[]) => void;
   drawingLoading?: boolean;
   drawingData?: TechnicalDrawingData | null;
 }
@@ -97,6 +100,7 @@ export default function CadPanel({
   const onTemplateOutcomeRef = useRef(onTemplateOutcome);
   onTemplateOutcomeRef.current = onTemplateOutcome;
 
+  const lastMeshRef = useRef<{ stl: ArrayBuffer | null; off: string | null }>({ stl: null, off: null });
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<any>(null);
   const rendererRef = useRef<any>(null);
@@ -170,7 +174,7 @@ export default function CadPanel({
       container.innerHTML = "";
       container.appendChild(canvas);
 
-      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
       renderer.setSize(rect.width, rect.height);
       renderer.setPixelRatio(window.devicePixelRatio);
       renderer.setClearColor(0xffffff, 1);
@@ -280,10 +284,12 @@ export default function CadPanel({
           compiledCodeRef.current = scadCode;
           if (e.data.format === "stl" && e.data.stl) {
             log("Compilation done (STL) — loading mesh...");
+            lastMeshRef.current = { stl: e.data.stl, off: null };
             loadSTL(e.data.stl);
           } else if (e.data.off) {
             const preview = e.data.off.substring(0, 100).replace(/\n/g, " ");
             log(`Compilation done (OFF, ${e.data.off.length} chars) — ${preview}`);
+            lastMeshRef.current = { stl: null, off: e.data.off };
             loadOFF(e.data.off);
           } else {
             log("Compile returned but no mesh data");
@@ -366,8 +372,9 @@ export default function CadPanel({
 
       const material = new THREE.MeshPhongMaterial({
         vertexColors: hasColors,
+        flatShading: hasColors,
         color: hasColors ? 0xffffff : 0xf9d72c,
-        shininess: 50,
+        shininess: hasColors ? 20 : 50,
         side: THREE.DoubleSide,
       });
 
@@ -502,6 +509,7 @@ export default function CadPanel({
           const binary = atob(pendingStlBase64);
           const bytes = new Uint8Array(binary.length);
           for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          lastMeshRef.current = { stl: bytes.buffer, off: null };
           loadSTL(bytes.buffer);
           compiledCodeRef.current = codeRef.current;
         } catch (e: any) {
@@ -587,6 +595,45 @@ export default function CadPanel({
   }
 
   // --- Keyboard controls (WASD + QE + Arrows) — only when the viewport is focused ---
+  // Capture 3D views for technical drawing reference
+  function captureViews(): string[] {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !scene || !camera) return [];
+
+    const o = orbitRef.current;
+    const saved = { rotX: o.rotX, rotY: o.rotY, dist: o.dist, targetX: o.targetX, targetY: o.targetY, targetZ: o.targetZ };
+
+    const views: Array<{ rotX: number; rotY: number; label: string }> = [
+      { rotX: 0.0, rotY: 0, label: "front" },                   // Front elevation
+      { rotX: Math.PI / 2 - 0.01, rotY: 0, label: "top" },      // Top/plan view — looking down
+      { rotX: 0.5, rotY: -0.8, label: "isometric" },             // 3/4 isometric perspective
+    ];
+
+    const screenshots: string[] = [];
+    for (const view of views) {
+      o.rotX = view.rotX;
+      o.rotY = view.rotY;
+      // Update camera position (same math as the animate loop)
+      camera.position.set(
+        o.targetX + o.dist * Math.cos(o.rotX) * Math.sin(o.rotY),
+        o.targetY - o.dist * Math.cos(o.rotX) * Math.cos(o.rotY),
+        o.targetZ + o.dist * Math.sin(o.rotX)
+      );
+      camera.up.set(0, 0, 1);
+      const THREE = THREERef.current;
+      if (THREE) camera.lookAt(new THREE.Vector3(o.targetX, o.targetY, o.targetZ));
+      renderer.render(scene, camera);
+      const dataUrl = renderer.domElement.toDataURL("image/png");
+      screenshots.push(dataUrl.replace("data:image/png;base64,", ""));
+    }
+
+    // Restore original view
+    Object.assign(o, saved);
+    return screenshots;
+  }
+
   function onPreviewKeyDown(e: React.KeyboardEvent) {
     const key = e.key.toLowerCase();
     if (["w", "a", "s", "d", "q", "e", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
@@ -863,7 +910,33 @@ export default function CadPanel({
           <div className="p-4 space-y-4">
             <div className="flex items-center gap-3">
               <button
-                onClick={onRunFEA}
+                onClick={() => {
+                  // Send the compiled mesh to the backend for real FEA
+                  const mesh = lastMeshRef.current;
+                  let meshB64: string | undefined;
+                  try {
+                    if (mesh.stl) {
+                      const bytes = new Uint8Array(mesh.stl);
+                      let binary = "";
+                      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                      meshB64 = btoa(binary);
+                      log(`FEA: sending STL mesh (${bytes.length} bytes)`);
+                    } else if (mesh.off) {
+                      // Use TextEncoder for safe base64
+                      const encoder = new TextEncoder();
+                      const bytes = encoder.encode(mesh.off);
+                      let binary = "";
+                      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                      meshB64 = btoa(binary);
+                      log(`FEA: sending OFF mesh (${mesh.off.length} chars)`);
+                    } else {
+                      log("FEA: no compiled mesh available — compile the model first");
+                    }
+                  } catch (e: any) {
+                    log(`FEA: mesh encoding error: ${e.message}`);
+                  }
+                  onRunFEA?.(meshB64);
+                }}
                 disabled={!onRunFEA || feaLoading || !code}
                 className="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
@@ -883,24 +956,34 @@ export default function CadPanel({
                   feaData.safety_factor >= 1 ? "bg-amber-900/50 text-amber-300" :
                   "bg-red-900/50 text-red-300"
                 }`}>
-                  Safety Factor: {feaData.safety_factor.toFixed(1)}
+                  SF: {feaData.safety_factor.toFixed(1)}{feaData.max_stress_mpa != null ? ` | Peak: ${feaData.max_stress_mpa.toFixed(1)} MPa` : ""}
                 </span>
               )}
             </div>
 
-            {feaData?.stress_script && (
+            {(feaData?.stress_off || feaData?.stress_script) && (
               <button
-                onClick={() => {
-                  setCode(feaData.stress_script);
-                  compiledCodeRef.current = "";
-                  setTab("preview");
+                onClick={async () => {
+                  if (feaData.stress_off) {
+                    // Load real solver OFF mesh directly
+                    const ready = await ensureThree();
+                    if (ready) {
+                      loadOFF(feaData.stress_off);
+                      setTab("preview");
+                    }
+                  } else if (feaData.stress_script) {
+                    // Fallback: LLM-generated colored OpenSCAD
+                    setCode(feaData.stress_script);
+                    compiledCodeRef.current = "";
+                    setTab("preview");
+                  }
                 }}
                 className="text-xs px-3 py-1.5 bg-red-600 text-white rounded hover:bg-red-500 transition-colors flex items-center gap-1.5"
               >
                 View Stress Heat Map in 3D
               </button>
             )}
-            {feaData?.stress_script && (
+            {(feaData?.stress_off || feaData?.stress_script) && (
               <button
                 onClick={() => {
                   if (cadCode) {
@@ -1011,7 +1094,10 @@ export default function CadPanel({
           <div className="p-4 space-y-4">
             <div className="flex items-center gap-3">
               <button
-                onClick={onRunDrawing}
+                onClick={() => {
+                  const views = captureViews();
+                  onRunDrawing?.(views.length > 0 ? views : undefined);
+                }}
                 disabled={!onRunDrawing || drawingLoading || !code}
                 className="text-xs px-3 py-1.5 bg-sky-600 text-white rounded hover:bg-sky-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
               >

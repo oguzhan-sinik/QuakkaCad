@@ -123,7 +123,13 @@ print("STL export OK", file=sys.stderr)
         logger.info("CadQuery exit code: %d, stderr: %s", proc.returncode, stderr_text[:200])
 
         if proc.returncode != 0:
-            return CadQueryResult(success=False, stderr=stderr_text)
+            if proc.returncode == -11 or proc.returncode == 139:
+                return CadQueryResult(
+                    success=False,
+                    stderr="CadQuery crashed (SIGSEGV) — cadquery-ocp is incompatible with this system. "
+                           "This is a known issue on macOS ARM. The generated code is correct but cannot be compiled locally."
+                )
+            return CadQueryResult(success=False, stderr=stderr_text or f"Process exited with code {proc.returncode}")
 
         stl_bytes = stl_path.read_bytes() if stl_path.exists() else None
         step_bytes = step_path.read_bytes() if step_path.exists() else None

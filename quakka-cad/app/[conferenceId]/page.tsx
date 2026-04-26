@@ -175,13 +175,17 @@ export default function ConferencePage() {
     }
   }, []);
 
-  const handleRunFEA = useCallback(async () => {
+  const handleRunFEA = useCallback(async (meshData?: string) => {
     const mid = meetingIdRef.current;
     if (!mid || feaLoadingRef.current) return;
     setFeaLoading(true);
     setCadTabOverride("fea");
     try {
-      const res = await fetch(`/api/meetings/${mid}/agent/fea`, { method: "POST" });
+      const res = await fetch(`/api/meetings/${mid}/agent/fea`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mesh_base64: meshData ?? null }),
+      });
       if (!res.ok) throw new Error(await res.text());
       const result = await res.json();
       setFeaData(result.analysis as FEAAnalysisData);
@@ -192,13 +196,17 @@ export default function ConferencePage() {
     }
   }, []);
 
-  const handleRunDrawing = useCallback(async () => {
+  const handleRunDrawing = useCallback(async (screenshots?: string[]) => {
     const mid = meetingIdRef.current;
     if (!mid || drawingLoadingRef.current) return;
     setDrawingLoading(true);
     setCadTabOverride("drawing");
     try {
-      const res = await fetch(`/api/meetings/${mid}/agent/drawing`, { method: "POST" });
+      const res = await fetch(`/api/meetings/${mid}/agent/drawing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference_images: screenshots ?? [] }),
+      });
       if (!res.ok) throw new Error(await res.text());
       const result = await res.json();
       setDrawingData(result.drawing as TechnicalDrawingData);
