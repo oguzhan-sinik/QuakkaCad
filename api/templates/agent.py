@@ -82,12 +82,11 @@ def _get_template_agent(provider: str = "anthropic") -> Agent:
         import sys
         from pathlib import Path
         sys.path.insert(0, str(Path(__file__).parent.parent))
-        from agents import PROVIDER_CONFIG, _require_key, _system_prompt
+        from agents import PROVIDER_CONFIG, _require_key, _make_model
         _require_key(provider)
-        cfg = PROVIDER_CONFIG[provider]
         _template_agents[provider] = Agent(
-            cfg["model"],
-            system_prompt=_system_prompt(provider, TEMPLATE_SYSTEM_PROMPT),
+            _make_model(provider),
+            system_prompt=TEMPLATE_SYSTEM_PROMPT,
             output_type=str,
             retries=1,
         )

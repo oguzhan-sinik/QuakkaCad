@@ -1,4 +1,4 @@
-"""Compose a gear train from spur gears with computed center distances."""
+"""Compose a gear train from spur gears with correct center distances and meshing."""
 
 from ..atomic import get_module
 from ..models import GearTrainSpec
@@ -11,27 +11,46 @@ def compose(spec: GearTrainSpec) -> str:
         "",
         get_module("spur_gear"),
         "",
-        "// Assembly",
-        "union() {",
+        "// Assembly — gears along X axis with meshing offsets",
     ]
 
-    # Position gears along X axis with correct center distances
-    colors = ["SteelBlue", "Tomato", "Gold", "MediumSeaGreen"]
-    x = 0.0
+    colors = ["SteelBlue", "Tomato", "Gold", "MediumSeaGreen", "Orchid", "DarkCyan"]
+    x_positions: list[float] = [0.0]
+
+    # Compute X positions based on pitch circle distances
+    for i in range(1, spec.gear_count):
+        prev_pitch_r = spec.module_val * spec.teeth[i - 1] / 2
+        curr_pitch_r = spec.module_val * spec.teeth[i] / 2
+        x_positions.append(x_positions[-1] + prev_pitch_r + curr_pitch_r)
+
+    lines.append("union() {")
     for i in range(spec.gear_count):
-        pitch_r = spec.module_val * spec.teeth[i] / 2
         color = colors[i % len(colors)]
-        # Alternate rotation so teeth mesh (offset by half tooth)
-        rot_offset = (180 / spec.teeth[i]) if i % 2 == 1 else 0
+        x = x_positions[i]
+        tooth_angle = 360.0 / spec.teeth[i]
+
+        # For meshing: adjacent gears must have teeth interleaved
+        # Odd-indexed gears rotate by half a tooth pitch so teeth fit into gaps
+        if i % 2 == 1:
+            rot = tooth_angle / 2
+        else:
+            rot = 0
+
         lines.append(
-            f"    color(\"{color}\") translate([{x}, 0, 0]) rotate([0, 0, {rot_offset}]) "
+            f"    color(\"{color}\") "
+            f"translate([{x:.2f}, 0, 0]) "
+            f"rotate([0, 0, {rot:.3f}]) "
             f"spur_gear(teeth={spec.teeth[i]}, module_val={spec.module_val}, "
             f"thickness={spec.thickness}, bore={spec.bore_d});"
         )
-        # Center distance to next gear
-        if i < spec.gear_count - 1:
-            next_pitch_r = spec.module_val * spec.teeth[i + 1] / 2
-            x += pitch_r + next_pitch_r
+
+    # Add axle indicators (thin cylinders through bores)
+    for i in range(spec.gear_count):
+        x = x_positions[i]
+        lines.append(
+            f"    color(\"DimGray\") translate([{x:.2f}, 0, 0]) "
+            f"cylinder(d={spec.bore_d * 0.8}, h={spec.thickness * 2}, center=true, $fn=16);"
+        )
 
     lines.append("}")
     return "\n".join(lines)
