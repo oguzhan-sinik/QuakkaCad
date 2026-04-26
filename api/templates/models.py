@@ -227,6 +227,279 @@ class HexStandoffSpec(BaseModel):
         return self
 
 
+class FourBarLinkageSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["four_bar_linkage"] = "four_bar_linkage"
+    ground_length: float = Field(gt=10, lt=500, description="Ground (fixed) link length mm")
+    crank_length: float = Field(gt=5, lt=300, description="Crank (input) link length mm")
+    coupler_length: float = Field(gt=5, lt=500, description="Coupler link length mm")
+    rocker_length: float = Field(gt=5, lt=300, description="Rocker (output) link length mm")
+    link_width: float = Field(default=10, gt=2, lt=50, description="Link bar width mm")
+    link_thickness: float = Field(default=5, gt=1, lt=30, description="Link bar thickness mm")
+    pivot_d: float = Field(default=5, gt=1, lt=30, description="Pivot pin diameter mm")
+    crank_angle: float = Field(default=45, ge=0, lt=360, description="Initial crank angle degrees")
+    ground_color: str = Field(default="DimGray", description="OpenSCAD color for ground link")
+    crank_color: str = Field(default="Tomato", description="OpenSCAD color for crank")
+    coupler_color: str = Field(default="SteelBlue", description="OpenSCAD color for coupler")
+    rocker_color: str = Field(default="Gold", description="OpenSCAD color for rocker")
+
+    @model_validator(mode="after")
+    def check_grashof(self):
+        links = sorted([self.ground_length, self.crank_length,
+                        self.coupler_length, self.rocker_length])
+        if links[3] >= links[0] + links[1] + links[2]:
+            raise ValueError(
+                "Linkage cannot close — longest link exceeds sum of other three"
+            )
+        return self
+
+
+class LeadScrewSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["lead_screw"] = "lead_screw"
+    screw_length: float = Field(gt=20, lt=1000, description="Screw shaft length mm")
+    screw_diameter: float = Field(gt=3, lt=80, description="Screw major diameter mm")
+    lead: float = Field(gt=0.5, lt=50, description="Lead (axial travel per revolution) mm")
+    starts: int = Field(default=1, ge=1, le=6, description="Number of thread starts")
+    nut_od: float = Field(gt=5, lt=120, description="Nut outer diameter mm")
+    nut_length: float = Field(gt=5, lt=150, description="Nut length mm")
+    bore_d: float = Field(default=3, gt=0, lt=50, description="Shaft bore diameter mm")
+    ball_screw: bool = Field(default=False, description="Ball screw (true) or lead screw (false)")
+    nut_position: float = Field(default=0.5, ge=0.0, le=1.0, description="Nut position along screw (0=start, 1=end)")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.nut_od <= self.screw_diameter:
+            raise ValueError(f"nut_od ({self.nut_od}) must exceed screw_diameter ({self.screw_diameter})")
+        if self.nut_length > self.screw_length * 0.8:
+            raise ValueError("nut_length must be < 80% of screw_length")
+        return self
+
+
+class CamFollowerSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["cam_follower"] = "cam_follower"
+    base_radius: float = Field(gt=5, lt=200, description="Cam base circle radius mm")
+    lift: float = Field(gt=1, lt=100, description="Maximum follower lift (rise) mm")
+    cam_thickness: float = Field(gt=2, lt=80, description="Cam disc thickness mm")
+    follower_diameter: float = Field(default=10, gt=2, lt=60, description="Follower roller diameter mm")
+    follower_length: float = Field(default=60, gt=10, lt=300, description="Follower stem length mm")
+    shaft_d: float = Field(default=8, gt=1, lt=50, description="Camshaft diameter mm")
+    cam_profile: Literal["eccentric", "pear", "heart"] = Field(default="eccentric", description="Cam profile shape")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.lift >= self.base_radius:
+            raise ValueError(f"lift ({self.lift}) must be < base_radius ({self.base_radius})")
+        if self.shaft_d >= self.base_radius:
+            raise ValueError(f"shaft_d ({self.shaft_d}) must be < base_radius ({self.base_radius})")
+        return self
+
+
+class UniversalJointSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["universal_joint"] = "universal_joint"
+    shaft_d: float = Field(gt=3, lt=100, description="Input/output shaft diameter mm")
+    yoke_width: float = Field(gt=5, lt=150, description="Yoke arm width mm")
+    yoke_thickness: float = Field(gt=2, lt=50, description="Yoke arm thickness mm")
+    cross_diameter: float = Field(gt=2, lt=60, description="Spider/cross journal diameter mm")
+    cross_length: float = Field(gt=5, lt=100, description="Spider arm length (tip to tip) mm")
+    joint_angle: float = Field(default=30, ge=0, lt=90, description="Angle between shafts degrees")
+    shaft_length: float = Field(default=60, gt=10, lt=500, description="Visible shaft length each side mm")
+    double_joint: bool = Field(default=False, description="Double cardan (CV-like) joint")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.cross_diameter >= self.yoke_width:
+            raise ValueError("cross_diameter must be < yoke_width")
+        if self.shaft_d >= self.yoke_width:
+            raise ValueError("shaft_d must be < yoke_width")
+        return self
+
+
+class BeltPulleySpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["belt_pulley"] = "belt_pulley"
+    driver_diameter: float = Field(gt=10, lt=500, description="Driver pulley/sprocket pitch diameter mm")
+    driven_diameter: float = Field(gt=10, lt=500, description="Driven pulley/sprocket pitch diameter mm")
+    center_distance: float = Field(gt=20, lt=2000, description="Center-to-center distance mm")
+    belt_width: float = Field(default=10, gt=2, lt=80, description="Belt/chain width mm")
+    belt_thickness: float = Field(default=3, gt=0.5, lt=15, description="Belt thickness mm")
+    pulley_thickness: float = Field(default=12, gt=2, lt=60, description="Pulley face width mm")
+    bore_d: float = Field(default=8, gt=1, lt=80, description="Shaft bore diameter mm")
+    drive_type: Literal["belt", "chain"] = Field(default="belt", description="Belt or chain drive")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        min_cd = (self.driver_diameter + self.driven_diameter) / 2 + 5
+        if self.center_distance < min_cd:
+            raise ValueError(
+                f"center_distance ({self.center_distance}) must be >= {min_cd:.1f} "
+                f"(sum of radii + clearance)"
+            )
+        if self.bore_d >= self.driver_diameter * 0.8:
+            raise ValueError("bore_d must be < 80% of driver_diameter")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Reusable hole / cutout sub-models — embedded by bulkhead, body tube, plate
+# ---------------------------------------------------------------------------
+
+class CircularHoleSpec(BaseModel):
+    """A single circular hole (screw clearance, vent, lightening, etc.)."""
+    hole_type: Literal["circular"] = "circular"
+    diameter: float = Field(gt=0, lt=200, description="Hole diameter mm")
+    x: float = Field(default=0, description="X offset from part centre mm")
+    y: float = Field(default=0, description="Y offset from part centre mm")
+    countersink: bool = Field(default=False, description="Add 90° countersink")
+
+
+class BoltCircleSpec(BaseModel):
+    """A ring of equally spaced screw holes."""
+    hole_type: Literal["bolt_circle"] = "bolt_circle"
+    bolt_count: int = Field(ge=2, le=24, description="Number of bolt holes")
+    bolt_circle_d: float = Field(gt=0, lt=500, description="Bolt circle diameter mm")
+    bolt_hole_d: float = Field(default=3.4, gt=0, lt=30, description="Individual hole diameter mm (e.g. 3.4 for M3 clearance)")
+    start_angle: float = Field(default=0, ge=0, lt=360, description="Angle of first hole degrees")
+    countersink: bool = Field(default=False, description="Add 90° countersink on each hole")
+
+
+class RectSlotSpec(BaseModel):
+    """A rounded-rectangle slot / cutout (cable management, lightening, etc.)."""
+    hole_type: Literal["rect_slot"] = "rect_slot"
+    width: float = Field(gt=0, lt=500, description="Slot width mm (X direction)")
+    height: float = Field(gt=0, lt=500, description="Slot height mm (Y direction)")
+    corner_r: float = Field(default=2, ge=0, lt=50, description="Corner radius mm (0 = sharp)")
+    x: float = Field(default=0, description="X offset from part centre mm")
+    y: float = Field(default=0, description="Y offset from part centre mm")
+
+
+HolePattern = Annotated[
+    Union[CircularHoleSpec, BoltCircleSpec, RectSlotSpec],
+    Field(discriminator="hole_type"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Hobby-rocketry and general-purpose plate templates
+# ---------------------------------------------------------------------------
+
+# Standard Estes body-tube designations (OD in mm)
+_BT_DIAMETERS: dict[str, float] = {
+    "BT-5":   13.8,
+    "BT-20":  18.7,
+    "BT-50":  24.8,
+    "BT-55":  33.7,
+    "BT-60":  41.6,
+    "BT-70":  56.3,
+    "BT-80":  66.0,
+    "BT-101": 103.6,
+}
+
+
+class BulkheadSpec(BaseModel):
+    """Flat disc that seals the end of a body tube.
+
+    Supports a centre bore, one or more bolt circles, and arbitrary extra
+    holes / rectangular slots (e.g. wiring pass-throughs).
+    """
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["bulkhead"] = "bulkhead"
+    outer_d: float = Field(gt=5, lt=500, description="Bulkhead outer diameter mm (should match tube ID)")
+    thickness: float = Field(gt=0.5, lt=50, description="Disc thickness mm")
+    center_bore_d: float = Field(default=0, ge=0, lt=200, description="Centre bore diameter mm (0 = solid)")
+    shoulder_d: float = Field(default=0, ge=0, lt=500, description="Shoulder (lip) diameter mm that nests inside tube (0 = no shoulder)")
+    shoulder_length: float = Field(default=0, ge=0, lt=50, description="Shoulder insertion depth mm")
+    holes: list[HolePattern] = Field(default_factory=list, description="Additional holes / cutouts (bolt circles, screw holes, slots)")
+    color: str = Field(default="BurlyWood", description="OpenSCAD color name")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.center_bore_d >= self.outer_d:
+            raise ValueError("center_bore_d must be < outer_d")
+        if self.shoulder_d > 0 and self.shoulder_d >= self.outer_d:
+            raise ValueError("shoulder_d must be < outer_d")
+        return self
+
+
+class BodyTubeSpec(BaseModel):
+    """Hobby-rocketry body tube — optionally pick a standard BT designation,
+    or supply custom OD / wall.  Supports arbitrary hole cutouts along the wall.
+    """
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["body_tube"] = "body_tube"
+    bt_designation: str | None = Field(default=None, description="Standard tube name e.g. 'BT-50', 'BT-80' (overrides outer_d)")
+    outer_d: float = Field(default=24.8, gt=5, lt=500, description="Tube outer diameter mm (ignored when bt_designation is set)")
+    wall: float = Field(default=0.8, gt=0.2, lt=20, description="Wall thickness mm")
+    length: float = Field(gt=10, lt=2000, description="Tube length mm")
+    holes: list[HolePattern] = Field(default_factory=list, description="Holes / slots cut through the tube wall")
+    color: str = Field(default="SteelBlue", description="OpenSCAD color name")
+
+    @model_validator(mode="after")
+    def resolve_designation(self):
+        if self.bt_designation:
+            key = self.bt_designation.upper().replace(" ", "")
+            if key in _BT_DIAMETERS:
+                self.outer_d = _BT_DIAMETERS[key]
+            else:
+                raise ValueError(
+                    f"Unknown designation '{self.bt_designation}'; "
+                    f"choose from {list(_BT_DIAMETERS.keys())}"
+                )
+        if self.wall * 2 >= self.outer_d:
+            raise ValueError("wall * 2 must be < outer_d")
+        return self
+
+
+class MountingPlateSpec(BaseModel):
+    """Flat rectangular plate / table / bracket with arbitrary holes and slots.
+
+    Perfect for electronics mounting, cable routing tables, avionics sleds, etc.
+    """
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["mounting_plate"] = "mounting_plate"
+    width: float = Field(gt=5, lt=1000, description="Plate width mm (X)")
+    depth: float = Field(gt=5, lt=1000, description="Plate depth mm (Y)")
+    thickness: float = Field(gt=0.5, lt=50, description="Plate thickness mm")
+    corner_r: float = Field(default=0, ge=0, lt=100, description="Outer corner radius mm (0 = sharp)")
+    holes: list[HolePattern] = Field(default_factory=list, description="Holes / cutouts / bolt patterns")
+    color: str = Field(default="Silver", description="OpenSCAD color name")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.corner_r > min(self.width, self.depth) / 2:
+            raise ValueError("corner_r exceeds half the smallest side")
+        return self
+
+
+class DifferentialGearSpec(BaseModel):
+    reasoning: str = Field(description="Brief explanation of parameter choices")
+    assembly_type: Literal["differential_gear"] = "differential_gear"
+    ring_gear_teeth: int = Field(ge=20, le=120, description="Ring (crown) gear tooth count")
+    pinion_teeth: int = Field(ge=8, le=40, description="Drive pinion tooth count")
+    side_gear_teeth: int = Field(ge=10, le=60, description="Side (axle) gear tooth count")
+    spider_gear_teeth: int = Field(ge=8, le=40, description="Spider (planet) gear tooth count")
+    spider_count: int = Field(default=2, ge=2, le=4, description="Number of spider gears")
+    module_val: float = Field(gt=0.5, lt=10, description="Gear module mm")
+    thickness: float = Field(gt=2, lt=50, description="Gear thickness mm")
+    bore_d: float = Field(default=8, gt=1, lt=60, description="Axle bore diameter mm")
+    case_od: float = Field(default=0, ge=0, lt=400, description="Differential case OD mm (auto if 0)")
+    include_case: bool = Field(default=True, description="Include the differential housing/case")
+
+    @model_validator(mode="after")
+    def check_geometry(self):
+        if self.side_gear_teeth != self.spider_gear_teeth:
+            # For a standard open diff, side and spider gears usually mesh
+            pass  # Allow mismatch for bevel gearing representation
+        ring_pitch_r = self.module_val * self.ring_gear_teeth / 2
+        if self.case_od == 0:
+            self.case_od = round(ring_pitch_r * 1.5, 1)
+        if self.case_od < self.module_val * self.side_gear_teeth:
+            raise ValueError("case_od too small to contain side gears")
+        return self
+
+
 AssemblySpec = Annotated[
     Union[
         FinnedRocketBodySpec,
@@ -239,6 +512,15 @@ AssemblySpec = Annotated[
         HelicalSpringSpec,
         ShaftCouplingSpec,
         HexStandoffSpec,
+        FourBarLinkageSpec,
+        LeadScrewSpec,
+        CamFollowerSpec,
+        UniversalJointSpec,
+        BeltPulleySpec,
+        DifferentialGearSpec,
+        BulkheadSpec,
+        BodyTubeSpec,
+        MountingPlateSpec,
     ],
     Field(discriminator="assembly_type"),
 ]

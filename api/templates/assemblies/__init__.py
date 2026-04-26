@@ -2,15 +2,24 @@
 
 from ..models import AssemblySpec
 from . import (
+    belt_pulley,
+    body_tube,
+    bulkhead,
     bushing_assembly,
+    cam_follower,
+    differential_gear,
     finned_rocket_body,
     flanged_tube,
+    four_bar_linkage,
     gear_train,
     helical_spring,
     hex_standoff,
+    lead_screw,
+    mounting_plate,
     planetary_gear,
     rack_and_pinion,
     shaft_coupling,
+    universal_joint,
     worm_gear,
 )
 
@@ -25,6 +34,15 @@ _COMPOSERS = {
     "helical_spring":     helical_spring.compose,
     "shaft_coupling":     shaft_coupling.compose,
     "hex_standoff":       hex_standoff.compose,
+    "four_bar_linkage":   four_bar_linkage.compose,
+    "lead_screw":         lead_screw.compose,
+    "cam_follower":       cam_follower.compose,
+    "universal_joint":    universal_joint.compose,
+    "belt_pulley":        belt_pulley.compose,
+    "differential_gear":  differential_gear.compose,
+    "bulkhead":           bulkhead.compose,
+    "body_tube":          body_tube.compose,
+    "mounting_plate":     mounting_plate.compose,
 }
 
 

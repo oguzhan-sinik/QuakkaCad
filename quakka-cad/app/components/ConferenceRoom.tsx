@@ -56,6 +56,8 @@ interface ConferenceRoomProps {
   onRunDrawing?: (screenshots?: string[]) => void;
   drawingLoading?: boolean;
   drawingData?: TechnicalDrawingData | null;
+  gestureEnabled?: boolean;
+  onToggleGesture?: () => void;
 }
 
 export default function ConferenceRoom(props: ConferenceRoomProps) {
@@ -94,6 +96,8 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
     onRunDrawing,
     drawingLoading,
     drawingData,
+    gestureEnabled,
+    onToggleGesture,
   } = props;
 
   const [leftWidth, setLeftWidth] = useState(20);
@@ -219,6 +223,8 @@ export default function ConferenceRoom(props: ConferenceRoomProps) {
               onRunDrawing={onRunDrawing}
               drawingLoading={drawingLoading}
               drawingData={drawingData}
+              gestureEnabled={gestureEnabled}
+              onToggleGesture={onToggleGesture}
             />
           </div>
         </div>

@@ -56,6 +56,8 @@ interface CadPanelProps {
   onRunDrawing?: (screenshots?: string[]) => void;
   drawingLoading?: boolean;
   drawingData?: TechnicalDrawingData | null;
+  gestureEnabled?: boolean;
+  onToggleGesture?: () => void;
 }
 
 export default function CadPanel({
@@ -77,6 +79,8 @@ export default function CadPanel({
   onRunDrawing,
   drawingLoading = false,
   drawingData,
+  gestureEnabled: gestureEnabledProp,
+  onToggleGesture,
 }: CadPanelProps) {
   const [tab, setTab] = useState<Tab>("preview");
   const [code, setCode] = useState("");
@@ -126,7 +130,10 @@ export default function CadPanel({
   });
   const keysRef = useRef<Set<string>>(new Set());
 
-  const [gestureEnabled, setGestureEnabled] = useState(false);
+  const [gestureEnabledLocal, setGestureEnabledLocal] = useState(false);
+  // Use prop when provided (controlled by voice command at page level), otherwise local state
+  const gestureEnabled = gestureEnabledProp ?? gestureEnabledLocal;
+  const toggleGesture = onToggleGesture ?? (() => setGestureEnabledLocal(v => !v));
   const gestureVideoRef = useRef<HTMLVideoElement>(null);
   const { currentGesture, isReady: gestureReady, error: gestureError, videoDevices, selectedDeviceId, switchCamera } =
     useGestureControls({ orbitRef, videoRef: gestureVideoRef, enabled: gestureEnabled });
@@ -652,7 +659,7 @@ export default function CadPanel({
         </button>
         <div className="ml-auto flex items-center gap-3 pr-3">
           <button
-            onClick={() => setGestureEnabled(v => !v)}
+            onClick={toggleGesture}
             title="Toggle gesture controls (webcam)"
             className={`text-xs px-2.5 py-1 rounded transition-colors flex items-center gap-1.5 border ${
               gestureEnabled

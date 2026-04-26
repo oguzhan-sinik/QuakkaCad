@@ -10,15 +10,24 @@ from .agent import run_template_agent
 from .assemblies import dispatch_compose
 from .models import (
     AssemblySpec,
+    BeltPulleySpec,
+    BodyTubeSpec,
+    BulkheadSpec,
     BushingAssemblySpec,
+    CamFollowerSpec,
+    DifferentialGearSpec,
     FinnedRocketBodySpec,
     FlangedTubeSpec,
+    FourBarLinkageSpec,
     GearTrainSpec,
     HelicalSpringSpec,
     HexStandoffSpec,
+    LeadScrewSpec,
+    MountingPlateSpec,
     PlanetaryGearSpec,
     RackAndPinionSpec,
     ShaftCouplingSpec,
+    UniversalJointSpec,
     WormGearSpec,
 )
 
@@ -35,6 +44,15 @@ _ALL_ASSEMBLY_TYPES = [
     "helical_spring",
     "shaft_coupling",
     "hex_standoff",
+    "four_bar_linkage",
+    "lead_screw",
+    "cam_follower",
+    "universal_joint",
+    "belt_pulley",
+    "differential_gear",
+    "bulkhead",
+    "body_tube",
+    "mounting_plate",
 ]
 
 
@@ -319,6 +337,219 @@ def _sweep_type(assembly_type: str, k: int, seed: int) -> list[AssemblySpec]:
                 male_stud=male,
                 stud_d=round(bore * 0.9, 1) if male else 3.0,
                 stud_length=round(_lerp(4, 12, t), 1),
+            ))
+
+    elif assembly_type == "four_bar_linkage":
+        for i in range(k):
+            t = _t(i, k)
+            ground = round(_lerp(40, 200, t), 1)
+            crank = round(_lerp(15, 80, t), 1)
+            coupler = round(_lerp(30, 180, t), 1)
+            rocker = round(_lerp(20, 120, t), 1)
+            # Ensure Grashof closure: longest < sum of other three
+            links = sorted([ground, crank, coupler, rocker])
+            while links[3] >= links[0] + links[1] + links[2]:
+                links[3] -= 5
+            specs.append(FourBarLinkageSpec(
+                reasoning="parametric sweep",
+                ground_length=links[2],
+                crank_length=links[0],
+                coupler_length=links[1],
+                rocker_length=links[3],
+                link_width=round(_lerp(6, 18, t), 1),
+                link_thickness=round(_lerp(3, 10, t), 1),
+                pivot_d=round(_lerp(3, 10, t), 1),
+                crank_angle=round(_lerp(15, 120, t), 1),
+            ))
+
+    elif assembly_type == "lead_screw":
+        starts_cycle = [1, 1, 2, 1, 4, 2, 1, 2]
+        for i in range(k):
+            t = _t(i, k)
+            starts = starts_cycle[i % len(starts_cycle)]
+            screw_d = round(_lerp(6, 32, t), 1)
+            specs.append(LeadScrewSpec(
+                reasoning="parametric sweep",
+                screw_length=round(_lerp(60, 400, t), 1),
+                screw_diameter=screw_d,
+                lead=round(_lerp(1, 16, t), 1),
+                starts=starts,
+                nut_od=round(screw_d * _lerp(1.6, 2.0, t), 1),
+                nut_length=round(_lerp(10, 50, t), 1),
+                bore_d=round(_lerp(2, 10, t), 1),
+                ball_screw=i % 3 == 1,
+                nut_position=round(_lerp(0.2, 0.8, t), 2),
+            ))
+
+    elif assembly_type == "cam_follower":
+        profiles = ["eccentric", "pear", "heart", "eccentric"]
+        for i in range(k):
+            t = _t(i, k)
+            base_r = round(_lerp(15, 80, t), 1)
+            lift = round(_lerp(3, base_r * 0.6, t), 1)
+            shaft = round(_lerp(4, base_r * 0.5, t), 1)
+            specs.append(CamFollowerSpec(
+                reasoning="parametric sweep",
+                base_radius=base_r,
+                lift=lift,
+                cam_thickness=round(_lerp(5, 25, t), 1),
+                follower_diameter=round(_lerp(6, 20, t), 1),
+                follower_length=round(_lerp(30, 120, t), 1),
+                shaft_d=shaft,
+                cam_profile=profiles[i % len(profiles)],
+            ))
+
+    elif assembly_type == "universal_joint":
+        for i in range(k):
+            t = _t(i, k)
+            shaft = round(_lerp(6, 30, t), 1)
+            yoke_w = round(shaft * _lerp(2.5, 3.5, t), 1)
+            specs.append(UniversalJointSpec(
+                reasoning="parametric sweep",
+                shaft_d=shaft,
+                yoke_width=yoke_w,
+                yoke_thickness=round(_lerp(4, 15, t), 1),
+                cross_diameter=round(_lerp(3, yoke_w * 0.3, t), 1),
+                cross_length=round(yoke_w * 0.8, 1),
+                joint_angle=round(_lerp(10, 45, t), 1),
+                shaft_length=round(_lerp(30, 120, t), 1),
+                double_joint=i % 3 == 2,
+            ))
+
+    elif assembly_type == "belt_pulley":
+        drive_types = ["belt", "chain", "belt", "belt"]
+        for i in range(k):
+            t = _t(i, k)
+            driver_d = round(_lerp(30, 150, t), 1)
+            driven_d = round(_lerp(40, 300, t), 1)
+            min_cd = (driver_d + driven_d) / 2 + 10
+            cd = round(max(min_cd, _lerp(80, 500, t)), 1)
+            bore = round(_lerp(5, min(driver_d * 0.3, 30), t), 1)
+            specs.append(BeltPulleySpec(
+                reasoning="parametric sweep",
+                driver_diameter=driver_d,
+                driven_diameter=driven_d,
+                center_distance=cd,
+                belt_width=round(_lerp(6, 25, t), 1),
+                belt_thickness=round(_lerp(1, 6, t), 1),
+                pulley_thickness=round(_lerp(8, 30, t), 1),
+                bore_d=bore,
+                drive_type=drive_types[i % len(drive_types)],
+            ))
+
+    elif assembly_type == "differential_gear":
+        spider_counts = [2, 2, 3, 4, 2, 3, 2, 4]
+        for i in range(k):
+            t = _t(i, k)
+            ring_teeth = int(_lerp(30, 80, t))
+            pinion_teeth = int(_lerp(10, 25, t))
+            side_teeth = int(_lerp(12, 30, t))
+            spider_teeth = int(_lerp(10, 25, t))
+            specs.append(DifferentialGearSpec(
+                reasoning="parametric sweep",
+                ring_gear_teeth=ring_teeth,
+                pinion_teeth=max(8, pinion_teeth),
+                side_gear_teeth=max(10, side_teeth),
+                spider_gear_teeth=max(8, spider_teeth),
+                spider_count=spider_counts[i % len(spider_counts)],
+                module_val=round(_lerp(1.0, 4.0, t), 1),
+                thickness=round(_lerp(5, 20, t), 1),
+                bore_d=round(_lerp(5, 20, t), 1),
+                include_case=True,
+            ))
+
+    elif assembly_type == "bulkhead":
+        from .models import BoltCircleSpec, CircularHoleSpec, RectSlotSpec
+        for i in range(k):
+            t = _t(i, k)
+            od = round(_lerp(20, 100, t), 1)
+            holes = []
+            if i % 2 == 0:
+                # Bolt circle of M3 holes near the outer edge
+                holes.append(BoltCircleSpec(
+                    bolt_count=int(_lerp(3, 8, t)),
+                    bolt_circle_d=round(od - 8, 1),  # ~4mm from edge
+                    bolt_hole_d=3.4,
+                ))
+            if i % 3 == 1:
+                # Add a rectangular cable slot
+                holes.append(RectSlotSpec(
+                    width=round(_lerp(8, 20, t), 1),
+                    height=round(_lerp(4, 10, t), 1),
+                    corner_r=2,
+                ))
+            specs.append(BulkheadSpec(
+                reasoning="parametric sweep",
+                outer_d=od,
+                thickness=round(_lerp(2, 8, t), 1),
+                center_bore_d=round(od * 0.15, 1) if i % 2 == 1 else 0,
+                shoulder_d=round(od * 0.85, 1) if i % 3 == 0 else 0,
+                shoulder_length=3 if i % 3 == 0 else 0,
+                holes=holes,
+            ))
+
+    elif assembly_type == "body_tube":
+        from .models import CircularHoleSpec, RectSlotSpec, _BT_DIAMETERS
+        bt_names = list(_BT_DIAMETERS.keys())
+        for i in range(k):
+            t = _t(i, k)
+            bt = bt_names[i % len(bt_names)]
+            tube_len = round(_lerp(50, 500, t), 1)
+            holes = []
+            if i % 2 == 1:
+                # Vent hole on the side
+                holes.append(CircularHoleSpec(
+                    diameter=round(_lerp(3, 8, t), 1),
+                    x=0,       # angle 0°
+                    y=round(tube_len * 0.3, 1),
+                ))
+            if i % 3 == 2:
+                holes.append(RectSlotSpec(
+                    width=round(_lerp(6, 15, t), 1),
+                    height=round(_lerp(3, 8, t), 1),
+                    corner_r=1.5,
+                    x=90,      # angle 90°
+                    y=round(tube_len * 0.6, 1),
+                ))
+            specs.append(BodyTubeSpec(
+                reasoning="parametric sweep",
+                bt_designation=bt,
+                length=tube_len,
+                wall=round(_lerp(0.5, 2, t), 1),
+                holes=holes,
+            ))
+
+    elif assembly_type == "mounting_plate":
+        from .models import BoltCircleSpec, CircularHoleSpec, RectSlotSpec
+        for i in range(k):
+            t = _t(i, k)
+            w = round(_lerp(30, 200, t), 1)
+            d = round(_lerp(20, 150, t), 1)
+            holes = []
+            # Side-mounted M3 holes — on the long edges, spaced along Y
+            edge_inset = 5
+            y_spacing = round(d * 0.35, 1)
+            for sx in [-1, 1]:
+                for sy in [-1, 1]:
+                    holes.append(CircularHoleSpec(
+                        diameter=3.4,
+                        x=round(sx * (w / 2 - edge_inset), 1),
+                        y=round(sy * y_spacing, 1),
+                    ))
+            if i % 2 == 0:
+                # Centre cable slot
+                holes.append(RectSlotSpec(
+                    width=round(_lerp(10, 30, t), 1),
+                    height=round(_lerp(5, 15, t), 1),
+                    corner_r=round(_lerp(1, 4, t), 1),
+                ))
+            specs.append(MountingPlateSpec(
+                reasoning="parametric sweep",
+                width=w,
+                depth=d,
+                thickness=round(_lerp(2, 8, t), 1),
+                corner_r=round(_lerp(0, 8, t), 1),
+                holes=holes,
             ))
 
     return specs

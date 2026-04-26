@@ -48,6 +48,8 @@ export default function ConferencePage() {
   const [templateLoading, setTemplateLoading] = useState(false);
   const templateLoadingRef = useRef(false);
   templateLoadingRef.current = templateLoading;
+  const [gestureEnabled, setGestureEnabled] = useState(false);
+  const handleToggleGesture = useCallback(() => setGestureEnabled(v => !v), []);
   // Stores the MuBit session context for the most recent template generation,
   // so the WASM compile outcome can be reported back to close the learning loop.
   const templateSessionRef = useRef<{ sessionId: string; assemblyType: string } | null>(null);
@@ -66,7 +68,33 @@ export default function ConferencePage() {
   const plannerLoadingRef = useRef(false);
   plannerLoadingRef.current = plannerLoading;
   const lastPlannerLinesRef = useRef(0);
-  // Records the frontend line index (= postedCountRef before posting) at planner run start
+
+  // Re-create the meeting on the backend if it was lost (e.g. server restart).
+  // Returns the valid meeting ID, or null if re-creation also failed.
+  const ensureMeeting = useCallback(async (): Promise<string | null> => {
+    const mid = meetingIdRef.current;
+    if (!mid) return null;
+    try {
+      const probe = await fetch(`/api/meetings/${mid}/state`);
+      if (probe.ok) return mid;
+    } catch { /* backend unreachable */ }
+    // Meeting gone — re-create
+    try {
+      const res = await fetch("/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) return null;
+      const newId = (await res.json()).id as string;
+      setMeetingId(newId);
+      meetingIdRef.current = newId;
+      postedCountRef.current = 0;
+      return newId;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const conference = useConference({
     conferenceId,
@@ -237,8 +265,11 @@ export default function ConferencePage() {
   }, []);
 
   const handleRunPlanner = useCallback(async () => {
-    const mid = meetingIdRef.current;
-    if (!mid || plannerLoadingRef.current) return;
+    if (!meetingIdRef.current || plannerLoadingRef.current) return;
+
+    // Ensure the backend knows about our meeting (handles server restarts)
+    const mid = await ensureMeeting();
+    if (!mid) return;
 
     lastPlannerLinesRef.current = linesRef.current.length;
     setTranscriptUpdated(false);
@@ -350,7 +381,7 @@ export default function ConferencePage() {
       setTargetedBlockIds(new Set());
       setProcessingUpToEntry(null);
     }
-  }, [handleRunTemplate]);
+  }, [ensureMeeting, handleRunTemplate]);
 
   const handleSelectVersion = useCallback((id: string | null) => {
     if (id === null) {
@@ -427,7 +458,13 @@ export default function ConferencePage() {
       cooldownMs: 3000,
       action: () => setCadTabOverride("drawing"),
     },
-  ], [handleRunOpenSCAD, handleRunTemplate, handleRefine, handleRunPlanner, handleRunFEA, handleRunDrawing]);
+    {
+      id: "toggle-gesture",
+      triggers: ["open gesture control", "open gesture controls", "toggle gesture", "enable gesture", "disable gesture", "close gesture control", "close gesture controls"],
+      cooldownMs: 2000,
+      action: () => handleToggleGesture(),
+    },
+  ], [handleRunOpenSCAD, handleRunTemplate, handleRefine, handleRunPlanner, handleRunFEA, handleRunDrawing, handleToggleGesture]);
 
   const { commandLineIndices } = useVoiceCommands(lines, voiceCommands);
   const commandLineIndicesRef = useRef(commandLineIndices);
@@ -439,15 +476,31 @@ export default function ConferencePage() {
     onTranscript: onScribeTranscript,
   });
 
+  // Debounced planner trigger — wait for 3 s of silence (no new committed
+  // lines) before running the planner, so the speaker can finish their thought
+  // across multiple VAD segments.
+  const plannerDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const prevLineCountRef = useRef(lines.length);
+
   useEffect(() => {
     if (!meetingId) return;
-    const id = setInterval(() => {
+    // Only react when new committed lines appear
+    if (lines.length <= prevLineCountRef.current) {
+      prevLineCountRef.current = lines.length;
+      return;
+    }
+    prevLineCountRef.current = lines.length;
+
+    // Reset debounce timer on every new committed line
+    clearTimeout(plannerDebounceRef.current);
+    plannerDebounceRef.current = setTimeout(() => {
       if (!plannerLoadingRef.current && linesRef.current.length > lastPlannerLinesRef.current) {
         handleRunPlanner();
       }
-    }, 1000);
-    return () => clearInterval(id);
-  }, [meetingId, handleRunPlanner]);
+    }, 3000);
+
+    return () => clearTimeout(plannerDebounceRef.current);
+  }, [meetingId, lines.length, handleRunPlanner]);
 
   const handleJoin = useCallback(
     async (name: string) => {
@@ -563,6 +616,8 @@ export default function ConferencePage() {
       onRunDrawing={meetingId ? handleRunDrawing : undefined}
       drawingLoading={drawingLoading}
       drawingData={drawingData}
+      gestureEnabled={gestureEnabled}
+      onToggleGesture={handleToggleGesture}
     />
   );
 }

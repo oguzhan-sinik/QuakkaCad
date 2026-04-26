@@ -14,14 +14,24 @@ from pydantic_ai import Agent
 
 from .models import (
     AssemblySpec,
+    BeltPulleySpec,
+    BodyTubeSpec,
+    BulkheadSpec,
     BushingAssemblySpec,
+    CamFollowerSpec,
+    DifferentialGearSpec,
     FinnedRocketBodySpec,
     FlangedTubeSpec,
+    FourBarLinkageSpec,
     GearTrainSpec,
     HelicalSpringSpec,
     HexStandoffSpec,
+    LeadScrewSpec,
+    MountingPlateSpec,
+    PlanetaryGearSpec,
     RackAndPinionSpec,
     ShaftCouplingSpec,
+    UniversalJointSpec,
     WormGearSpec,
 )
 
@@ -148,6 +158,138 @@ Input: "rigid coupling for 8mm and 10mm shafts, 25mm OD"
 Input: "M3 hex standoff 10mm"
 {"reasoning":"Standard M3 PCB standoff","assembly_type":"hex_standoff","bore_d":3,\
 "flat_to_flat":5.5,"length":10,"male_stud":false,"stud_d":3,"stud_length":6}
+
+12. "four_bar_linkage" — fields: reasoning, assembly_type, ground_length, crank_length, \
+coupler_length, rocker_length, link_width, link_thickness, pivot_d, crank_angle, \
+ground_color, crank_color, coupler_color, rocker_color
+Four rigid links connected by pivots. Used in suspensions, folding chairs, valve trains. \
+Constraint: longest link < sum of other three (Grashof closure).
+
+13. "lead_screw" — fields: reasoning, assembly_type, screw_length, screw_diameter, lead, \
+starts, nut_od, nut_length, bore_d, ball_screw, nut_position
+Converts rotary to linear motion. Set ball_screw=true for ball screws. \
+Constraint: nut_od > screw_diameter. nut_length < 80% of screw_length.
+
+14. "cam_follower" — fields: reasoning, assembly_type, base_radius, lift, cam_thickness, \
+follower_diameter, follower_length, shaft_d, cam_profile ("eccentric"|"pear"|"heart")
+Rotating cam pushes follower for timed linear motion. \
+Constraint: lift < base_radius. shaft_d < base_radius.
+
+15. "universal_joint" — fields: reasoning, assembly_type, shaft_d, yoke_width, \
+yoke_thickness, cross_diameter, cross_length, joint_angle, shaft_length, double_joint
+Transmits rotation between angled shafts. Set double_joint=true for constant-velocity. \
+Constraint: cross_diameter < yoke_width. shaft_d < yoke_width.
+
+16. "belt_pulley" — fields: reasoning, assembly_type, driver_diameter, driven_diameter, \
+center_distance, belt_width, belt_thickness, pulley_thickness, bore_d, \
+drive_type ("belt"|"chain")
+Transmits power between parallel shafts. Use "chain" for chain-and-sprocket. \
+Constraint: center_distance >= (driver_diameter + driven_diameter)/2 + 5. \
+bore_d < 80% of driver_diameter.
+
+17. "differential_gear" — fields: reasoning, assembly_type, ring_gear_teeth, pinion_teeth, \
+side_gear_teeth, spider_gear_teeth, spider_count, module_val, thickness, bore_d, \
+case_od (auto if 0), include_case
+Allows two output shafts at different speeds from one input. Used in vehicle axles. \
+Ratio = ring_gear_teeth / pinion_teeth.
+
+Input: "four-bar linkage, 100mm ground, 30mm crank, 80mm coupler, 70mm rocker"
+{"reasoning":"Standard crank-rocker linkage","assembly_type":"four_bar_linkage",\
+"ground_length":100,"crank_length":30,"coupler_length":80,"rocker_length":70,\
+"link_width":10,"link_thickness":5,"pivot_d":5,"crank_angle":45,\
+"ground_color":"DimGray","crank_color":"Tomato","coupler_color":"SteelBlue",\
+"rocker_color":"Gold"}
+
+Input: "ball screw 300mm long, 16mm diameter, 5mm lead"
+{"reasoning":"CNC axis ball screw","assembly_type":"lead_screw","screw_length":300,\
+"screw_diameter":16,"lead":5,"starts":1,"nut_od":28,"nut_length":30,"bore_d":4,\
+"ball_screw":true,"nut_position":0.5}
+
+Input: "cam with 8mm lift, 25mm base radius, pear profile"
+{"reasoning":"Pear cam for valve timing","assembly_type":"cam_follower",\
+"base_radius":25,"lift":8,"cam_thickness":10,"follower_diameter":10,\
+"follower_length":60,"shaft_d":8,"cam_profile":"pear"}
+
+Input: "universal joint for 12mm shafts at 30 degrees"
+{"reasoning":"Standard single U-joint","assembly_type":"universal_joint",\
+"shaft_d":12,"yoke_width":30,"yoke_thickness":8,"cross_diameter":8,\
+"cross_length":24,"joint_angle":30,"shaft_length":60,"double_joint":false}
+
+Input: "belt drive, 60mm driver, 120mm driven, 200mm apart"
+{"reasoning":"2:1 reduction belt drive","assembly_type":"belt_pulley",\
+"driver_diameter":60,"driven_diameter":120,"center_distance":200,\
+"belt_width":10,"belt_thickness":3,"pulley_thickness":12,"bore_d":8,\
+"drive_type":"belt"}
+
+Input: "differential gear, 60-tooth ring, 15-tooth pinion"
+{"reasoning":"4:1 automotive differential","assembly_type":"differential_gear",\
+"ring_gear_teeth":60,"pinion_teeth":15,"side_gear_teeth":20,\
+"spider_gear_teeth":15,"spider_count":2,"module_val":2,"thickness":10,\
+"bore_d":8,"case_od":0,"include_case":true}
+
+18. "bulkhead" — fields: reasoning, assembly_type, outer_d, thickness, center_bore_d (0=solid), \
+shoulder_d (0=none), shoulder_length, holes (array), color
+Flat disc that seals a rocket body tube. Supports screw holes, bolt circles, wiring slots. \
+The "holes" array can contain objects with hole_type "circular", "bolt_circle", or "rect_slot". \
+circular: {hole_type:"circular", diameter, x, y, countersink}. \
+bolt_circle: {hole_type:"bolt_circle", bolt_count, bolt_circle_d, bolt_hole_d, start_angle, countersink}. \
+rect_slot: {hole_type:"rect_slot", width, height, corner_r, x, y}. \
+IMPORTANT: Screw holes on bulkheads go near the outer edge — use a bolt_circle with \
+bolt_circle_d close to outer_d (e.g. outer_d minus 8-10 mm for M3).
+
+19. "body_tube" — fields: reasoning, assembly_type, bt_designation (null for custom), outer_d, \
+wall, length, holes (array), color
+Hobby-rocketry body tube. Standard designations: BT-5 (13.8mm), BT-20 (18.7mm), BT-50 (24.8mm), \
+BT-55 (33.7mm), BT-60 (41.6mm), BT-70 (56.3mm), BT-80 (66.0mm), BT-101 (103.6mm). \
+Set bt_designation to use standard OD; otherwise set outer_d directly. \
+holes array same format as bulkhead (for body_tube: x = angle in degrees, y = Z height mm from bottom).
+
+20. "mounting_plate" — fields: reasoning, assembly_type, width, depth, thickness, \
+corner_r (0=sharp), holes (array), color
+Rectangular plate / table / bracket for electronics mounting, cable management, avionics sleds. \
+Holes array same format as bulkhead. x/y offsets are from plate centre. \
+IMPORTANT: Screw/mounting holes go on the SIDES (edges) of the plate, not in the middle. \
+Place them near the edges: for a plate of width W and depth D, put M3 holes at \
+x near ±(W/2 - 5) along the long sides, spaced along Y. Cable management slots go in the centre.
+
+HOLE PATTERN FORMAT (used by bulkhead, body_tube, mounting_plate):
+- Circular: {"hole_type":"circular","diameter":3.4,"x":0,"y":0,"countersink":false}
+- Bolt circle: {"hole_type":"bolt_circle","bolt_count":6,"bolt_circle_d":40,"bolt_hole_d":3.4,"start_angle":0,"countersink":false}
+- Rect slot: {"hole_type":"rect_slot","width":20,"height":10,"corner_r":2,"x":0,"y":0}
+Common screw clearances: M2=2.4, M2.5=2.9, M3=3.4, M4=4.5, M5=5.5, M6=6.6
+
+Input: "BT-80 bulkhead with 6 M3 screw holes"
+{"reasoning":"Bulkhead for BT-80 tube, 6× M3 bolt circle near the outer edge","assembly_type":"bulkhead",\
+"outer_d":64.4,"thickness":3,"center_bore_d":0,"shoulder_d":0,"shoulder_length":0,\
+"holes":[{"hole_type":"bolt_circle","bolt_count":6,"bolt_circle_d":56,"bolt_hole_d":3.4,\
+"start_angle":0,"countersink":false}],"color":"BurlyWood"}
+
+Input: "bulkhead 40mm with centre bore and cable slot"
+{"reasoning":"40mm bulkhead with wiring passthrough","assembly_type":"bulkhead",\
+"outer_d":40,"thickness":3,"center_bore_d":8,"shoulder_d":0,"shoulder_length":0,\
+"holes":[{"hole_type":"rect_slot","width":12,"height":6,"corner_r":2,"x":0,"y":12}],\
+"color":"BurlyWood"}
+
+Input: "BT-50 tube 200mm long"
+{"reasoning":"Standard BT-50 rocket body tube","assembly_type":"body_tube",\
+"bt_designation":"BT-50","outer_d":24.8,"wall":0.8,"length":200,"holes":[],\
+"color":"SteelBlue"}
+
+Input: "BT-70 tube 300mm with a vent hole"
+{"reasoning":"BT-70 body tube with vent","assembly_type":"body_tube",\
+"bt_designation":"BT-70","outer_d":56.3,"wall":0.8,"length":300,\
+"holes":[{"hole_type":"circular","diameter":5,"x":0,"y":100,"countersink":false}],\
+"color":"SteelBlue"}
+
+Input: "80x50mm avionics plate, 3mm thick, M3 screw holes, cable slot in centre"
+{"reasoning":"Avionics sled — M3 holes on the long sides for mounting, rounded cable slot centred",\
+"assembly_type":"mounting_plate","width":80,"depth":50,"thickness":3,"corner_r":3,\
+"holes":[{"hole_type":"circular","diameter":3.4,"x":-35,"y":-12,"countersink":false},\
+{"hole_type":"circular","diameter":3.4,"x":-35,"y":12,"countersink":false},\
+{"hole_type":"circular","diameter":3.4,"x":35,"y":-12,"countersink":false},\
+{"hole_type":"circular","diameter":3.4,"x":35,"y":12,"countersink":false},\
+{"hole_type":"rect_slot","width":20,"height":10,"corner_r":2,"x":0,"y":0}],\
+"color":"Silver"}
 """
 
 _template_agents: dict[str, Any] = {}
